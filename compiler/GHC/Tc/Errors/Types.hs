@@ -32,6 +32,8 @@ module GHC.Tc.Errors.Types (
   , AssociatedTyNotParamOverLastTyVar(..)
   , associatedTyNotParamOverLastTyVar
 
+  , ErrorItem(..), errorItemOrigin, errorItemEqRel, errorItemPred, errorItemCtLoc
+
   , SolverReport(..), SolverReportSupplementary(..)
   , ReportWithCtxt(..)
   , ReportErrCtxt(..)
@@ -77,6 +79,7 @@ import GHC.Core.ConLike (ConLike)
 import GHC.Core.DataCon (DataCon)
 import GHC.Core.FamInstEnv (FamInst)
 import GHC.Core.InstEnv (ClsInst)
+import GHC.Core.Predicate (EqRel, predTypeEqRel)
 import GHC.Core.TyCon (TyCon, TyConFlavour)
 import GHC.Core.Type (Kind, Type, ThetaType, PredType)
 import GHC.Unit.State (UnitState)
@@ -597,9 +600,11 @@ data TcRnMessage where
      Test cases: partial-sig/should_fail/T14479
   -}
   TcRnPartialTypeSigBadQuantifier
-    :: Name -- ^ type variable being quantified
-    -> Name -- ^ function name
-    -> LHsSigWcType GhcRn -> TcRnMessage
+    :: Name   -- ^ user-written name of type variable being quantified
+    -> Name   -- ^ function name
+    -> Maybe Type   -- ^ type the variable unified with, if known
+    -> LHsSigWcType GhcRn  -- ^ partial type signature
+    -> TcRnMessage
 
   {-| TcRnPolymorphicBinderMissingSig is a warning controlled by -Wmissing-local-signatures
       that occurs when a local polymorphic binding lacks a type signature.
@@ -1826,7 +1831,10 @@ associatedTyNotParamOverLastTyVar (Just tc) = YesAssociatedTyNotParamOverLastTyV
 associatedTyNotParamOverLastTyVar Nothing   = NoAssociatedTyNotParamOverLastTyVar
 
 --------------------------------------------------------------------------------
--- Errors used in GHC.Tc.Errors
+--
+--     Errors used in GHC.Tc.Errors
+--
+--------------------------------------------------------------------------------
 
 {- Note [Error report]
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -1922,6 +1930,56 @@ getUserGivens :: ReportErrCtxt -> [UserGiven]
 -- One item for each enclosing implication
 getUserGivens (CEC {cec_encl = implics}) = getUserGivensFromImplics implics
 
+----------------------------------------------------------------------------
+--
+--   ErrorItem
+--
+----------------------------------------------------------------------------
+
+-- | A predicate with its arising location; used to encapsulate a constraint
+-- that will give rise to a diagnostic.
+data ErrorItem
+-- We could perhaps use Ct here (and indeed used to do exactly that), but
+-- having a separate type gives to denote errors-in-formation gives us
+-- a nice place to do pre-processing, such as calculating ei_suppress.
+-- Perhaps some day, an ErrorItem could eventually evolve to contain
+-- the error text (or some representation of it), so we can then have all
+-- the errors together when deciding which to report.
+  = EI { ei_pred     :: PredType         -- report about this
+         -- The ei_pred field will never be an unboxed equality with
+         -- a (casted) tyvar on the right; this is guaranteed by the solver
+       , ei_evdest   :: Maybe TcEvDest   -- for Wanteds, where to put evidence
+       , ei_flavour  :: CtFlavour
+       , ei_loc      :: CtLoc
+       , ei_m_reason :: Maybe CtIrredReason  -- if this ErrorItem was made from a
+                                             -- CtIrred, this stores the reason
+       , ei_suppress :: Bool    -- Suppress because of Note [Wanteds rewrite Wanteds]
+                                -- in GHC.Tc.Constraint
+       }
+
+instance Outputable ErrorItem where
+  ppr (EI { ei_pred     = pred
+          , ei_evdest   = m_evdest
+          , ei_flavour  = flav
+          , ei_suppress = supp })
+    = pp_supp <+> ppr flav <+> pp_dest m_evdest <+> ppr pred
+    where
+      pp_dest Nothing   = empty
+      pp_dest (Just ev) = ppr ev <+> dcolon
+
+      pp_supp = if supp then text "suppress:" else empty
+
+errorItemOrigin :: ErrorItem -> CtOrigin
+errorItemOrigin = ctLocOrigin . ei_loc
+
+errorItemEqRel :: ErrorItem -> EqRel
+errorItemEqRel = predTypeEqRel . ei_pred
+
+errorItemCtLoc :: ErrorItem -> CtLoc
+errorItemCtLoc = ei_loc
+
+errorItemPred :: ErrorItem -> PredType
+errorItemPred = ei_pred
 
 {- Note [discardProvCtxtGivens]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2019,7 +2077,7 @@ data TcReportMsg
   -- | A type equality between a type variable and a polytype.
   --
   -- Test cases: T12427a, T2846b, T10194, ...
-  | CannotUnifyWithPolytype Ct TyVar Type
+  | CannotUnifyWithPolytype ErrorItem TyVar Type
 
   -- | Couldn't unify two types or kinds.
   --
@@ -2029,10 +2087,10 @@ data TcReportMsg
   --
   --  Test cases: T1396, T8263, ...
   | Mismatch
-      { mismatch_ea  :: Bool -- ^ Should this be phrased in terms of expected vs actual?
-      , mismatch_ct  :: Ct   -- ^ The constraint in which the mismatch originated.
-      , mismatch_ty1 :: Type -- ^ First type (the expected type if if mismatch_ea is True)
-      , mismatch_ty2 :: Type -- ^ Second type (the actual type if mismatch_ea is True)
+      { mismatch_ea   :: Bool        -- ^ Should this be phrased in terms of expected vs actual?
+      , mismatch_item :: ErrorItem   -- ^ The constraint in which the mismatch originated.
+      , mismatch_ty1  :: Type        -- ^ First type (the expected type if if mismatch_ea is True)
+      , mismatch_ty2  :: Type        -- ^ Second type (the actual type if mismatch_ea is True)
       }
 
   -- | A type has an unexpected kind.
@@ -2050,9 +2108,9 @@ data TcReportMsg
   -- Test cases: T1470, tcfail212.
   | TypeEqMismatch
       { teq_mismatch_ppr_explicit_kinds :: Bool
-      , teq_mismatch_ct  :: Ct
-      , teq_mismatch_ty1 :: Type
-      , teq_mismatch_ty2 :: Type
+      , teq_mismatch_item     :: ErrorItem
+      , teq_mismatch_ty1      :: Type
+      , teq_mismatch_ty2      :: Type
       , teq_mismatch_expected :: Type -- ^ The overall expected type
       , teq_mismatch_actual   :: Type -- ^ The overall actual type
       , teq_mismatch_what     :: Maybe TypedThing -- ^ What thing is 'teq_mismatch_actual' the kind of?
@@ -2073,7 +2131,7 @@ data TcReportMsg
   --   foo (MkEx x) = x
   --
   -- Test cases: TypeSkolEscape, T11142.
-  | SkolemEscape Ct Implication [TyVar]
+  | SkolemEscape ErrorItem Implication [TyVar]
 
   -- | Trying to unify an untouchable variable, e.g. a variable from an outer scope.
   --
@@ -2084,7 +2142,7 @@ data TcReportMsg
   -- beteen their kinds.
   --
   -- Test cases: none.
-  | BlockedEquality Ct
+  | BlockedEquality ErrorItem
 
   -- | Something was not applied to sufficiently many arguments.
   --
@@ -2104,7 +2162,7 @@ data TcReportMsg
   --
   -- Test case: tcfail130.
   | UnboundImplicitParams
-      (NE.NonEmpty Ct)
+      (NE.NonEmpty ErrorItem)
 
   -- | Couldn't solve some Wanted constraints using the Givens.
   -- This is the most commonly used constructor, used for generic
@@ -2113,9 +2171,9 @@ data TcReportMsg
      { cnd_user_givens :: [Implication]
         -- | The Wanted constraints we couldn't solve.
         --
-        -- N.B.: the 'Ct' at the head of the list has been tidied,
+        -- N.B.: the 'ErrorItem' at the head of the list has been tidied,
         -- perhaps not the others.
-     , cnd_wanted      :: NE.NonEmpty Ct
+     , cnd_wanted      :: NE.NonEmpty ErrorItem
 
        -- | Some additional info consumed by 'mk_supplementary_ea_msg'.
      , cnd_extra       :: Maybe CND_Extra
@@ -2134,7 +2192,7 @@ data TcReportMsg
   --
   -- Test case: T4921.
   | AmbiguityPreventsSolvingCt
-      Ct -- ^ always a class constraint
+      ErrorItem -- ^ always a class constraint
       ([TyVar], [TyVar]) -- ^ ambiguous kind and type variables, respectively
 
   -- | Could not solve a constraint; there were several unifying candidate instances
@@ -2142,7 +2200,7 @@ data TcReportMsg
   -- as possible about why we couldn't choose any instance, e.g. because of
   -- ambiguous type variables.
   | CannotResolveInstance
-    { cannotResolve_ct :: Ct
+    { cannotResolve_item         :: ErrorItem
     , cannotResolve_unifiers     :: [ClsInst]
     , cannotResolve_candidates   :: [ClsInst]
     , cannotResolve_importErrors :: [ImportError]
@@ -2156,7 +2214,7 @@ data TcReportMsg
   --
   -- Test cases: tcfail118, tcfail121, tcfail218.
   | OverlappingInstances
-    { overlappingInstances_ct :: Ct
+    { overlappingInstances_item     :: ErrorItem
     , overlappingInstances_matches  :: [ClsInst]
     , overlappingInstances_unifiers :: [ClsInst] }
 
@@ -2166,7 +2224,7 @@ data TcReportMsg
   --
   -- Test cases: SH_Overlap{1,2,5,6,7,11}.
   | UnsafeOverlap
-    { unsafeOverlap_ct :: Ct
+    { unsafeOverlap_item    :: ErrorItem
     , unsafeOverlap_matches :: [ClsInst]
     , unsafeOverlapped      :: [ClsInst] }
 

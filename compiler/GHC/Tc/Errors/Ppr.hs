@@ -225,11 +225,18 @@ instance Diagnostic TcRnMessage where
                    <+> text "with" <+> quotes (ppr n2))
                 2 (hang (text "both bound by the partial type signature:")
                         2 (ppr fn_name <+> dcolon <+> ppr hs_ty))
-    TcRnPartialTypeSigBadQuantifier n fn_name hs_ty
+    TcRnPartialTypeSigBadQuantifier n fn_name m_unif_ty hs_ty
       -> mkSimpleDecorated $
            hang (text "Can't quantify over" <+> quotes (ppr n))
-                2 (hang (text "bound by the partial type signature:")
-                        2 (ppr fn_name <+> dcolon <+> ppr hs_ty))
+                2 (vcat [ hang (text "bound by the partial type signature:")
+                             2 (ppr fn_name <+> dcolon <+> ppr hs_ty)
+                        , extra ])
+      where
+        extra | Just rhs_ty <- m_unif_ty
+              = sep [ quotes (ppr n), text "should really be", quotes (ppr rhs_ty) ]
+              | otherwise
+              = empty
+
     TcRnPolymorphicBinderMissingSig n ty
       -> mkSimpleDecorated $
            sep [ text "Polymorphic local binding with no type signature:"
@@ -1491,7 +1498,7 @@ pprTcReportMsg _ (UserTypeError ty) =
   pprUserTypeErrorTy ty
 pprTcReportMsg ctxt (ReportHoleError hole err) =
   pprHoleError ctxt hole err
-pprTcReportMsg _ (CannotUnifyWithPolytype ct tv1 ty2) =
+pprTcReportMsg _ (CannotUnifyWithPolytype item tv1 ty2) =
   vcat [ (if isSkolemTyVar tv1
           then text "Cannot equate type variable"
           else text "Cannot instantiate unification variable")
@@ -1499,13 +1506,13 @@ pprTcReportMsg _ (CannotUnifyWithPolytype ct tv1 ty2) =
        , hang (text "with a" <+> what <+> text "involving polytypes:") 2 (ppr ty2) ]
   where
     what = text $ levelString $
-           ctLocTypeOrKind_maybe (ctLoc ct) `orElse` TypeLevel
+           ctLocTypeOrKind_maybe (errorItemCtLoc item) `orElse` TypeLevel
 pprTcReportMsg _
-  (Mismatch { mismatch_ea = add_ea
-            , mismatch_ct = ct
-            , mismatch_ty1 = ty1
-            , mismatch_ty2 = ty2 })
-  = addArising (ctOrigin ct) msg
+  (Mismatch { mismatch_ea   = add_ea
+            , mismatch_item = item
+            , mismatch_ty1  = ty1
+            , mismatch_ty2  = ty2 })
+  = addArising (errorItemOrigin item) msg
   where
     msg
       | (isLiftedRuntimeRep ty1 && isUnliftedRuntimeRep ty2) ||
@@ -1536,9 +1543,9 @@ pprTcReportMsg _
 
     padding = length herald1 - length herald2
 
-    is_repr = case ctEqRel ct of { ReprEq -> True; NomEq -> False }
+    is_repr = case errorItemEqRel item of { ReprEq -> True; NomEq -> False }
 
-    what = levelString (ctLocTypeOrKind_maybe (ctLoc ct) `orElse` TypeLevel)
+    what = levelString (ctLocTypeOrKind_maybe (errorItemCtLoc item) `orElse` TypeLevel)
 
     conc :: [String] -> String
     conc = foldr1 add_space
@@ -1565,9 +1572,9 @@ pprTcReportMsg _
 
 pprTcReportMsg ctxt
   (TypeEqMismatch { teq_mismatch_ppr_explicit_kinds = ppr_explicit_kinds
-                  , teq_mismatch_ct  = ct
-                  , teq_mismatch_ty1 = ty1
-                  , teq_mismatch_ty2 = ty2
+                  , teq_mismatch_item     = item
+                  , teq_mismatch_ty1      = ty1
+                  , teq_mismatch_ty2      = ty2
                   , teq_mismatch_expected = exp
                   , teq_mismatch_actual   = act
                   , teq_mismatch_what     = mb_thing })
@@ -1588,21 +1595,21 @@ pprTcReportMsg ctxt
                 Just thing -> quotes (ppr thing) <+> text "has kind"
             , quotes (pprWithTYPE act) ]
       | Just nargs_msg <- num_args_msg
-      , Right ea_msg <- mk_ea_msg ctxt (Just ct) level orig
+      , Right ea_msg <- mk_ea_msg ctxt (Just item) level orig
       = nargs_msg $$ pprTcReportMsg ctxt ea_msg
       | -- pprTrace "check" (ppr ea_looks_same $$ ppr exp $$ ppr act $$ ppr ty1 $$ ppr ty2) $
         ea_looks_same ty1 ty2 exp act
-      , Right ea_msg <- mk_ea_msg ctxt (Just ct) level orig
+      , Right ea_msg <- mk_ea_msg ctxt (Just item) level orig
       = pprTcReportMsg ctxt ea_msg
       -- The mismatched types are /inside/ exp and act
-      | let mismatch_err = Mismatch False ct ty1 ty2
+      | let mismatch_err = Mismatch False item ty1 ty2
             errs = case mk_ea_msg ctxt Nothing level orig of
               Left ea_info -> [ mkTcReportWithInfo mismatch_err ea_info ]
               Right ea_err -> [ mismatch_err, ea_err ]
       = vcat $ map (pprTcReportMsg ctxt) errs
 
-    ct_loc = ctLoc ct
-    orig   = ctOrigin ct
+    ct_loc = errorItemCtLoc item
+    orig   = errorItemOrigin item
     level  = ctLocTypeOrKind_maybe ct_loc `orElse` TypeLevel
 
     thing_msg (Just thing) _  levity = quotes (ppr thing) <+> text "is" <+> levity
@@ -1643,7 +1650,7 @@ pprTcReportMsg _ (FixedRuntimeRepError origs_and_tys) =
              ,nest 2 $ ppr ty <+> dcolon <+> pprWithTYPE (typeKind ty)]
   in
     vcat $ map (uncurry combine_origin_ty) origs_and_tys
-pprTcReportMsg _ (SkolemEscape ct implic esc_skols) =
+pprTcReportMsg _ (SkolemEscape item implic esc_skols) =
   let
     esc_doc = sep [ text "because" <+> what <+> text "variable" <> plural esc_skols
                 <+> pprQuotedList esc_skols
@@ -1663,7 +1670,7 @@ pprTcReportMsg _ (SkolemEscape ct implic esc_skols) =
          ppr (getLclEnvLoc (ic_env implic)) ] ]
   where
     what = text $ levelString $
-           ctLocTypeOrKind_maybe (ctLoc ct) `orElse` TypeLevel
+           ctLocTypeOrKind_maybe (errorItemCtLoc item) `orElse` TypeLevel
 pprTcReportMsg _ (UntouchableVariable tv implic)
   | Implic { ic_given = given, ic_info = skol_info } <- implic
   = sep [ quotes (ppr tv) <+> text "is untouchable"
@@ -1671,9 +1678,9 @@ pprTcReportMsg _ (UntouchableVariable tv implic)
         , nest 2 $ text "bound by" <+> ppr skol_info
         , nest 2 $ text "at" <+>
           ppr (getLclEnvLoc (ic_env implic)) ]
-pprTcReportMsg _ (BlockedEquality ct) =
+pprTcReportMsg _ (BlockedEquality item) =
   vcat [ hang (text "Cannot use equality for substitution:")
-           2 (ppr (ctPred ct))
+           2 (ppr (errorItemPred item))
        , text "Doing so would be ill-kinded." ]
 pprTcReportMsg _ (ExpectingMoreArguments n thing) =
   text "Expecting" <+> speakN (abs n) <+>
@@ -1682,16 +1689,16 @@ pprTcReportMsg _ (ExpectingMoreArguments n thing) =
     more
      | n == 1    = text "more argument to"
      | otherwise = text "more arguments to" -- n > 1
-pprTcReportMsg ctxt (UnboundImplicitParams (ct :| cts)) =
+pprTcReportMsg ctxt (UnboundImplicitParams (item :| items)) =
   let givens = getUserGivens ctxt
   in if null givens
-     then addArising (ctOrigin ct) $
+     then addArising (errorItemOrigin item) $
             sep [ text "Unbound implicit parameter" <> plural preds
                 , nest 2 (pprParendTheta preds) ]
-     else pprTcReportMsg ctxt (CouldNotDeduce givens (ct :| cts) Nothing)
+     else pprTcReportMsg ctxt (CouldNotDeduce givens (item :| items) Nothing)
   where
-    preds = map ctPred (ct : cts)
-pprTcReportMsg ctxt (CouldNotDeduce useful_givens (ct :| others) mb_extra)
+    preds = map errorItemPred (item : items)
+pprTcReportMsg ctxt (CouldNotDeduce useful_givens (item :| others) mb_extra)
   = main_msg $$
      case supplementary of
       Left infos
@@ -1701,17 +1708,17 @@ pprTcReportMsg ctxt (CouldNotDeduce useful_givens (ct :| others) mb_extra)
   where
     main_msg
       | null useful_givens
-      = addArising (ctOrigin ct) no_instance_msg
+      = addArising orig no_instance_msg
       | otherwise
-      = vcat [ addArising (ctOrigin ct) no_deduce_msg
+      = vcat [ addArising orig no_deduce_msg
              , vcat (pp_givens useful_givens) ]
     supplementary = case mb_extra of
       Nothing
         -> Left []
       Just (CND_Extra level ty1 ty2)
         -> mk_supplementary_ea_msg ctxt level ty1 ty2 orig
-    (wanted, wanteds) = (ctPred ct, map ctPred others)
-    orig = ctOrigin ct
+    (wanted, wanteds) = (errorItemPred item, map errorItemPred others)
+    orig = errorItemOrigin item
     no_instance_msg
       | null others
       , Just (tc, _) <- splitTyConApp_maybe wanted
@@ -1725,13 +1732,13 @@ pprTcReportMsg ctxt (CouldNotDeduce useful_givens (ct :| others) mb_extra)
       = text "Could not deduce" <+> pprParendType wanted
       | otherwise
       = text "Could not deduce:" <+> pprTheta wanteds
-pprTcReportMsg ctxt (AmbiguityPreventsSolvingCt ct ambigs) =
+pprTcReportMsg ctxt (AmbiguityPreventsSolvingCt item ambigs) =
   pprTcReportInfo ctxt (Ambiguity True ambigs) <+>
-  pprArising (ctOrigin ct) $$
-  text "prevents the constraint" <+> quotes (pprParendType $ ctPred ct)
+  pprArising (errorItemOrigin item) $$
+  text "prevents the constraint" <+> quotes (pprParendType $ errorItemPred item)
   <+> text "from being solved."
 pprTcReportMsg ctxt@(CEC {cec_encl = implics})
-  (CannotResolveInstance ct unifiers candidates imp_errs suggs binds)
+  (CannotResolveInstance item unifiers candidates imp_errs suggs binds)
   =
     vcat
       [ pprTcReportMsg ctxt no_inst_msg
@@ -1754,11 +1761,11 @@ pprTcReportMsg ctxt@(CEC {cec_encl = implics})
       , vcat $ map ppr imp_errs
       , vcat $ map ppr suggs ]
   where
-    orig          = ctOrigin ct
-    pred          = ctPred ct
+    orig          = errorItemOrigin item
+    pred          = errorItemPred item
     (clas, tys)   = getClassPredTys pred
     -- See Note [Highlighting ambiguous type variables]
-    (ambig_kvs, ambig_tvs) = ambigTkvsOfCt ct
+    (ambig_kvs, ambig_tvs) = ambigTkvsOfTy pred
     ambigs = ambig_kvs ++ ambig_tvs
     has_ambigs = not (null ambigs)
     useful_givens = discardProvCtxtGivens orig (getUserGivensFromImplics implics)
@@ -1772,9 +1779,9 @@ pprTcReportMsg ctxt@(CEC {cec_encl = implics})
     no_inst_msg :: TcReportMsg
     no_inst_msg
       | lead_with_ambig
-      = AmbiguityPreventsSolvingCt ct (ambig_kvs, ambig_tvs)
+      = AmbiguityPreventsSolvingCt item (ambig_kvs, ambig_tvs)
       | otherwise
-      = CouldNotDeduce useful_givens (ct :| []) Nothing
+      = CouldNotDeduce useful_givens (item :| []) Nothing
 
     -- Report "potential instances" only when the constraint arises
     -- directly from the user's use of an overloaded function
@@ -1826,7 +1833,7 @@ pprTcReportMsg ctxt@(CEC {cec_encl = implics})
       = hang (text "use a standalone 'deriving instance' declaration,")
            2 (text "so you can specify the instance context yourself")
 
-pprTcReportMsg (CEC {cec_encl = implics}) (OverlappingInstances ct matches unifiers) =
+pprTcReportMsg (CEC {cec_encl = implics}) (OverlappingInstances item matches unifiers) =
   vcat
     [ addArising orig $
         (text "Overlapping instances for"
@@ -1863,8 +1870,8 @@ pprTcReportMsg (CEC {cec_encl = implics}) (OverlappingInstances ct matches unifi
                            , text "when compiling the other instance declarations"]
                ])]
   where
-    orig            = ctOrigin ct
-    pred            = ctPred ct
+    orig            = errorItemOrigin item
+    pred            = errorItemPred item
     (clas, tys)     = getClassPredTys pred
     tyCoVars        = tyCoVarsOfTypesList tys
     famTyCons       = filter isFamilyTyCon $ concatMap (nonDetEltsUniqSet . tyConsOfType) tys
@@ -1886,7 +1893,7 @@ pprTcReportMsg (CEC {cec_encl = implics}) (OverlappingInstances ct matches unifi
                      Just (clas', tys') -> clas' == clas
                                           && isJust (tcMatchTys tys tys')
                      Nothing -> False
-pprTcReportMsg _ (UnsafeOverlap ct matches unsafe_overlapped) =
+pprTcReportMsg _ (UnsafeOverlap item matches unsafe_overlapped) =
   vcat [ addArising orig (text "Unsafe overlapping instances for"
                   <+> pprType (mkClassPred clas tys))
        , sep [text "The matching instance is:",
@@ -1899,8 +1906,8 @@ pprTcReportMsg _ (UnsafeOverlap ct matches unsafe_overlapped) =
               ]
        ]
   where
-    orig        = ctOrigin ct
-    pred        = ctPred ct
+    orig        = errorItemOrigin item
+    pred        = errorItemPred item
     (clas, tys) = getClassPredTys pred
 
 {- *********************************************************************
@@ -2435,6 +2442,9 @@ pprArising :: CtOrigin -> SDoc
 -- We've done special processing for TypeEq, KindEq, givens
 pprArising (TypeEqOrigin {})         = empty
 pprArising (KindEqOrigin {})         = empty
+pprArising (AmbiguityCheckOrigin {}) = empty  -- the "In the ambiguity check" context
+                                              -- is sufficient; this would just be
+                                              -- repetitive
 pprArising orig | isGivenOrigin orig = empty
                 | otherwise          = pprCtOrigin orig
 
@@ -2574,9 +2584,10 @@ ea_looks_same ty1 ty2 exp act
       -- when the types really look the same.  However,
       -- (TYPE 'LiftedRep) and Type both print the same way.
 
-mk_ea_msg :: ReportErrCtxt -> Maybe Ct -> TypeOrKind -> CtOrigin -> Either [TcReportInfo] TcReportMsg
+mk_ea_msg :: ReportErrCtxt -> Maybe ErrorItem -> TypeOrKind
+          -> CtOrigin -> Either [TcReportInfo] TcReportMsg
 -- Constructs a "Couldn't match" message
--- The (Maybe Ct) says whether this is the main top-level message (Just)
+-- The (Maybe ErrorItem) says whether this is the main top-level message (Just)
 --     or a supplementary message (Nothing)
 mk_ea_msg ctxt at_top level
   (TypeEqOrigin { uo_actual = act, uo_expected = exp, uo_thing = mb_thing })
@@ -2585,13 +2596,13 @@ mk_ea_msg ctxt at_top level
   = Right $ KindMismatch { kmismatch_what     = thing
                          , kmismatch_expected = exp
                          , kmismatch_actual   = act }
-  | Just ct <- at_top
+  | Just item <- at_top
   , let mismatch =
           Mismatch
-            { mismatch_ea = True
-            , mismatch_ct = ct
-            , mismatch_ty1 = exp
-            , mismatch_ty2 = act }
+            { mismatch_ea   = True
+            , mismatch_item = item
+            , mismatch_ty1  = exp
+            , mismatch_ty2  = act }
   = Right $
     if expanded_syns
     then mkTcReportWithInfo mismatch [ea_expanded]
