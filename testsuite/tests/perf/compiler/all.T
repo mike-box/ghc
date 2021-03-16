@@ -618,4 +618,4 @@ test('T16875',  # Testing one hole-fit with a lot in scope for #16875
 test ('T20261',
       [collect_compiler_stats('all')],
       compile,
-      [''])
+      ['-v0 -O0'])
