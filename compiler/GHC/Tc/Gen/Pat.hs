@@ -339,6 +339,21 @@ tc_lpat pat_ty penv (L span pat) thing_inside
                                           thing_inside
         ; return (L span pat', res) }
 
+tc_lmatchpat :: Scaled ExpSigmaType
+             -> Checker (LMatchPat GhcRn) (LMatchPat GhcTc)
+tc_lmatchpat pat_ty penv (L l (VisPat x pat)) thing_inside
+  = do  { (pat', res) <- tc_lpat pat_ty penv pat thing_inside
+        ; return (L l (VisPat x pat'), res) }
+tc_lmatchpat _ _ _ _ = panic "we don't have that yet"
+
+tc_lmatchpats :: [Scaled ExpSigmaType]
+              -> Checker [LMatchPat GhcRn] [LMatchPat GhcTc]
+tc_lmatchpats tys penv pats
+  = assertPpr (equalLength pats tys) (ppr pats $$ ppr tys) $
+    tcMultiple (\ penv' (p,t) -> tc_lmatchpat t penv' p)
+               penv
+               (zipEqual "tc_lmatchpat" pats tys)
+
 tc_lpats :: [Scaled ExpSigmaType]
          -> Checker [LPat GhcRn] [LPat GhcTc]
 tc_lpats tys penv pats
