@@ -76,7 +76,7 @@ module GHC.Tc.Utils.TcMType (
   zonkTyCoVarsAndFVList,
 
   zonkTcType, zonkTcTypes, zonkCo,
-  zonkTyCoVarKind,
+  zonkTyCoVarKind, zonkTyCoVarKindBinder, zonkTyCoBinder,
   zonkEvVar, zonkWC, zonkImplication, zonkSimples,
   zonkId, zonkCoVar,
   zonkCt, zonkSkolemInfo, zonkSkolemInfoAnon,
@@ -97,6 +97,8 @@ module GHC.Tc.Utils.TcMType (
   ------------------------------
   -- Representation polymorphism
   checkTypeHasFixedRuntimeRep,
+
+  toTyCoBinder, checkingExpBinder
   ) where
 
 import GHC.Prelude
@@ -2354,6 +2356,16 @@ zonkTyCoVarKind :: TyCoVar -> TcM TyCoVar
 zonkTyCoVarKind tv = do { kind' <- zonkTcType (tyVarKind tv)
                         ; return (setTyVarKind tv kind') }
 
+zonkTyCoVarKindBinder :: (VarBndr TyCoVar fl) -> TcM (VarBndr TyCoVar fl)
+zonkTyCoVarKindBinder (Bndr tv fl) = do { kind' <- zonkTcType (tyVarKind tv)
+                                        ; return $ Bndr (setTyVarKind tv kind') fl }
+
+zonkTyCoBinder :: TyCoBinder -> TcM TyCoBinder
+zonkTyCoBinder (Anon flag (Scaled mult ty)) = do { ty' <- zonkTcType ty
+                                                 ; return $ Anon flag (Scaled mult ty') }
+zonkTyCoBinder (Named tv)     = do { tv' <- zonkTyCoVarKindBinder tv
+                                   ; return $ Named tv' }
+
 {-
 ************************************************************************
 *                                                                      *
@@ -2728,3 +2740,16 @@ naughtyQuantification orig_ty tv escapees
                         ]
 
        ; failWithTcM (env, msg) }
+
+toTyCoBinder :: ExpTyCoBinder -> TcM TyCoBinder
+toTyCoBinder (ExpNamed tvb) = return (Named tvb)
+toTyCoBinder (ExpAnon flag scaled_exp_type) =
+  do { unExp <- readScaledExpType scaled_exp_type
+     ; return (Anon flag unExp) }
+
+checkingExpBinder :: String -> ExpTyCoBinder -> TyCoBinder
+checkingExpBinder str (ExpAnon flag (Scaled mult exp_type)) =
+  Anon flag (Scaled mult ty)
+  where
+    ty = checkingExpType str exp_type
+checkingExpBinder _ (ExpNamed tvb) = Named tvb

@@ -34,9 +34,9 @@ module GHC.Hs.Pat (
         hsRecFields, hsRecFieldSel, hsRecFieldId, hsRecFieldsArgs,
         hsRecUpdFieldId, hsRecUpdFieldOcc, hsRecUpdFieldRdr,
 
-        mkPrefixConPat, mkCharLitPat, mkNilPat, mkVisMatchPat,
+        mkPrefixConPat, mkCharLitPat, mkNilPat, mkVisMatchPat, mkVisMatchPat',
 
-        isSimplePat,
+        isSimplePat, isSimpleMatchPat,
         looksLazyPatBind,
         isBangedLPat, isBangedLMatchPat,
         gParPat, patNeedsParens, parenthesizePat, parenthesizeLMatchPat,
@@ -184,6 +184,9 @@ type instance XXMatchPat (GhcPass _) = DataConCantHappen
 mkVisMatchPat :: LPat (GhcPass pass) -> LMatchPat (GhcPass pass)
 mkVisMatchPat lpat = L (getLoc lpat) (VisPat noExtField lpat)
 
+mkVisMatchPat' :: Pat (GhcPass pass) -> MatchPat (GhcPass pass)
+mkVisMatchPat' pat = VisPat noExtField (L noSrcSpanA pat)
+
 -- ---------------------------------------------------------------------
 
 -- API Annotations types
@@ -218,6 +221,7 @@ data XXPatGhcTc
   -- for RebindableSyntax and other overloaded syntax such as OverloadedLists.
   -- See Note [Rebindable syntax and HsExpansion].
   | ExpansionPat (Pat GhcRn) (Pat GhcTc)
+
 
 -- See Note [Rebindable syntax and HsExpansion].
 data HsPatExpansion a b
@@ -621,6 +625,11 @@ isSimplePat p = case unLoc p of
   VarPat _ x -> Just (unLoc x)
   _ -> Nothing
 
+isSimpleMatchPat :: LMatchPat (GhcPass x) -> Maybe (IdP (GhcPass x))
+isSimpleMatchPat p = case unLoc p of
+  VisPat _ lpat -> isSimplePat lpat
+  InvisTyVarPat _ lipd -> Just (unLoc lipd)
+  _ -> Nothing
 
 {- Note [Unboxed sum patterns aren't irrefutable]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

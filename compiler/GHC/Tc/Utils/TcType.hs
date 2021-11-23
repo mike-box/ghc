@@ -27,7 +27,8 @@ module GHC.Tc.Utils.TcType (
   TcKind, TcCoVar, TcTyCoVar, TcTyVarBinder, TcInvisTVBinder, TcReqTVBinder,
   TcTyCon, MonoTcTyCon, PolyTcTyCon, TcTyConBinder, KnotTied,
 
-  ExpType(..), InferResult(..), ExpSigmaType, ExpRhoType, mkCheckExpType,
+  ExpType(..), InferResult(..), ExpTyCoBinder(..), ExpSigmaType, ExpRhoType, mkCheckExpType,
+  toExpBinder, expTyBinderType, expTyBinderMult,
 
   SyntaxOpType(..), synKnownType, mkSynFunTys,
 
@@ -439,6 +440,27 @@ instance Outputable InferResult where
 mkCheckExpType :: TcType -> ExpType
 mkCheckExpType = Check
 
+data ExpTyCoBinder
+  = ExpNamed TyCoVarBinder    -- A type-lambda binder
+  | ExpAnon AnonArgFlag (Scaled ExpType)  -- A term-lambda binder. Type here can be CoercionTy.
+                                        -- Visibility is determined by the AnonArgFlag
+
+expTyBinderType :: ExpTyCoBinder -> ExpType
+expTyBinderType (ExpAnon _ exp_ty)      = scaledThing exp_ty
+expTyBinderType (ExpNamed (Bndr var _)) = mkCheckExpType (varType var)
+
+expTyBinderMult :: ExpTyCoBinder -> Mult
+expTyBinderMult (ExpAnon _ (Scaled m _)) = m
+expTyBinderMult _                        = Many
+
+toExpBinder :: TyCoBinder -> ExpTyCoBinder
+toExpBinder (Named tvb) = ExpNamed tvb
+toExpBinder (Anon flag (Scaled mult ty)) =
+  ExpAnon flag (Scaled mult (mkCheckExpType ty))
+
+instance Outputable ExpTyCoBinder where
+  ppr (ExpNamed tvb) = text "ExpNamed" <> ppr tvb
+  ppr (ExpAnon flag ty) = text "ExpAnon" <> ppr flag <> ppr ty
 
 {- *********************************************************************
 *                                                                      *

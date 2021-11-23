@@ -20,7 +20,7 @@
 -- See Note [Language.Haskell.Syntax.* Hierarchy] for why not GHC.Hs.*
 module Language.Haskell.Syntax.Pat (
         Pat(..), LPat, MatchPat(..), LMatchPat,
-        isVis, discardLInvisPats, ConLikeP,
+        isVis, isInvis, discardLInvisPats, discardLInvisPats', discardLVisPats, ConLikeP,
 
         HsConPatDetails, hsConPatArgs,
         HsRecFields(..), HsFieldBind(..), LHsFieldBind,
@@ -229,6 +229,13 @@ isVis pat =
     VisPat _ _ -> True
     _          -> False
 
+isInvis ::  forall pass. UnXRec pass => LMatchPat pass -> Bool
+isInvis pat =
+  case unXRec @pass pat of
+    InvisTyVarPat _ _ -> True
+    InvisWildTyPat _  -> True
+    _                 -> False
+
 discardLInvisPats :: forall pass. UnXRec pass => [LMatchPat pass] -> [LPat pass]
 -- this is a temporary function that we remove for the final version
 discardLInvisPats [] = []
@@ -236,6 +243,24 @@ discardLInvisPats (x : xs) =
   case unXRec @pass x of
     VisPat _ pat -> pat : discardLInvisPats xs
     _            -> discardLInvisPats xs
+
+discardLInvisPats' :: forall pass. UnXRec pass => [MatchPat pass] -> [Pat pass]
+    -- this is a temporary function that we remove for the final version
+discardLInvisPats' [] = []
+discardLInvisPats' (x : xs) =
+  case x of
+    VisPat _ pat -> case unXRec @pass pat of
+      pat -> pat : discardLInvisPats' xs
+    _            -> discardLInvisPats' xs
+
+discardLVisPats :: forall pass. UnXRec pass => [LMatchPat pass] -> [MatchPat pass]
+    -- this is a temporary function that we remove for the final version
+discardLVisPats [] = []
+discardLVisPats (x : xs) =
+  case unXRec @pass x of
+    pat@(InvisTyVarPat _ _) -> pat : discardLVisPats xs
+    pat@(InvisWildTyPat _)  -> pat : discardLVisPats xs
+    _                       -> discardLVisPats xs
 
 -- ---------------------------------------------------------------------
 

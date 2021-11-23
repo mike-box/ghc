@@ -65,6 +65,8 @@ import GHC.Builtin.Types (mkTupleStr)
 import GHC.Tc.Utils.TcType (TcType)
 import {-# SOURCE #-} GHC.Tc.Types (TcLclEnv)
 
+import Language.Haskell.Syntax.Pat (isInvis)
+
 -- libraries:
 import Data.Data hiding (Fixity(..))
 import qualified Data.Data as Data (Fixity(..))
@@ -1254,8 +1256,15 @@ matchGroupArity (MG { mg_alts = alts })
   | L _ (alt1:_) <- alts = length (hsLMatchPats alt1)
   | otherwise        = panic "matchGroupArity"
 
+matchGroupLMatchPats :: MatchGroup (GhcPass id) body -> [LMatchPat (GhcPass id)]
+matchGroupLMatchPats (MG { mg_alts = (L _ (alt : _)) }) = hsLMatchPats alt
+matchGroupLMatchPats _ = panic "matchGroupLMatchPats"
+
 hsLMatchPats :: LMatch (GhcPass id) body -> [LMatchPat (GhcPass id)]
 hsLMatchPats (L _ (Match { m_pats = pats })) = pats
+
+hasInvisPats :: MatchGroup (GhcPass id) body -> Bool
+hasInvisPats mg = any isInvis (matchGroupLMatchPats mg)
 
 -- We keep the type checker happy by providing EpAnnComments.  They
 -- can only be used if they follow a `where` keyword with no binds,
