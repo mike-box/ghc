@@ -56,7 +56,7 @@ import GHC.Types.Var.Env
 import GHC.Types.Var.Set
 import GHC.Data.OrdList
 import GHC.Types.Id as Id
-import GHC.Core.Make            ( mkWildValBinder )
+import GHC.Core.Make            ( mkWildValBinder, mkCoreLet )
 import GHC.Driver.Session       ( DynFlags )
 import GHC.Builtin.Types
 import GHC.Core.TyCo.Rep        ( TyCoBinder(..) )
@@ -429,7 +429,8 @@ Note [LetFloats]
 ~~~~~~~~~~~~~~~~
 The LetFloats is a bunch of bindings, classified by a FloatFlag.
 
-* All of them satisfy the let/app invariant
+This can contain bindings that do not satisfy the let-can-float invariant,
+but then the flag is guaranteed to be FltCareful.
 
 Examples
 
@@ -440,10 +441,8 @@ Examples
   NonRec x# (y +# 3)    FltOkSpec   -- Unboxed, but ok-for-spec'n
 
   NonRec x* (f y)       FltCareful  -- Strict binding; might fail or diverge
-
-Can't happen:
-  NonRec x# (a /# b)    -- Might fail; does not satisfy let/app
-  NonRec x# (f y)       -- Might diverge; does not satisfy let/app
+  NonRec x# (a /# b)    FltCareful  -- Might fail; does not satisfy let-can-float invariant
+  NonRec x# (f y)       FltCareful  -- Might diverge; does not satisfy let-can-float invariant
 -}
 
 data LetFloats = LetFloats (OrdList OutBind) FloatFlag
@@ -513,7 +512,7 @@ emptyLetFloats = LetFloats nilOL FltLifted
 emptyJoinFloats :: JoinFloats
 emptyJoinFloats = nilOL
 
-unitLetFloat :: OutBind -> LetFloats
+unitLetFloat :: HasDebugCallStack => OutBind -> LetFloats
 -- This key function constructs a singleton float with the right form
 unitLetFloat bind = assert (all (not . isJoinId) (bindersOf bind)) $
                     LetFloats (unitOL bind) (flag bind)
@@ -525,9 +524,7 @@ unitLetFloat bind = assert (all (not . isJoinId) (bindersOf bind)) $
           -- String literals can be floated freely.
           -- See Note [Core top-level string literals] in GHC.Core.
       | exprOkForSpeculation rhs = FltOkSpec  -- Unlifted, and lifted but ok-for-spec (eg HNF)
-      | otherwise                = assertPpr (not (isUnliftedType (idType bndr))) (ppr bndr)
-                                   FltCareful
-      -- Unlifted binders can only be let-bound if exprOkForSpeculation holds
+      | otherwise                = FltCareful
 
 unitJoinFloat :: OutBind -> JoinFloats
 unitJoinFloat bind = assert (all isJoinId (bindersOf bind)) $
@@ -632,13 +629,15 @@ mkRecFloats floats@(SimplFloats { sfLetFloats  = LetFloats bs _ff
               | otherwise   = unitJoinFloat (Rec (flattenBinds (fromOL jbs)))
 
 wrapFloats :: SimplFloats -> OutExpr -> OutExpr
--- Wrap the floats around the expression; they should all
--- satisfy the let/app invariant, so mkLets should do the job just fine
-wrapFloats (SimplFloats { sfLetFloats  = LetFloats bs _
+-- Wrap the floats around the expression
+wrapFloats (SimplFloats { sfLetFloats  = LetFloats bs flag
                         , sfJoinFloats = jbs }) body
-  = foldrOL Let (wrapJoinFloats jbs body) bs
+  = foldrOL mk_let (wrapJoinFloats jbs body) bs
      -- Note: Always safe to put the joins on the inside
      -- since the values can't refer to them
+  where
+    mk_let | FltCareful <- flag = mkCoreLet -- need to enforce let-can-float-invariant
+           | otherwise          = Let       -- let-can-float invariant hold
 
 wrapJoinFloatsX :: SimplFloats -> OutExpr -> (SimplFloats, OutExpr)
 -- Wrap the sfJoinFloats of the env around the expression,
