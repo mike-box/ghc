@@ -27,6 +27,7 @@ module GHC.Core.InstEnv (
         memberInstEnv,
         instIsVisible,
         classInstances, instanceBindFun,
+        classNameInstances,
         instanceCantMatch, roughMatchTcs,
         isOverlappable, isOverlapping, isIncoherent
     ) where
@@ -438,6 +439,9 @@ instEnvElts (InstEnv rm) = elemsRM rm
 instEnvEltsForClass :: InstEnv -> Class -> [ClsInst]
 instEnvEltsForClass (InstEnv rm) cls = lookupRM [RML_KnownTc (className cls)] rm
 
+instEnvEltsForClassName :: InstEnv -> Name -> [ClsInst]
+instEnvEltsForClassName (InstEnv rm) cls_nm = lookupRM [RML_KnownTc cls_nm] rm
+
 -- N.B. this is not particularly efficient but used only by GHCi.
 instEnvClasses :: InstEnv -> UniqDSet Class
 instEnvClasses ie = mkUniqDSet $ map is_cls (instEnvElts ie)
@@ -462,6 +466,13 @@ classInstances (InstEnvs { ie_global = pkg_ie, ie_local = home_ie, ie_visible = 
   where
     get :: InstEnv -> [ClsInst]
     get ie = filter (instIsVisible vis_mods) (instEnvEltsForClass ie cls)
+
+classNameInstances :: InstEnvs -> Name -> [ClsInst]
+classNameInstances (InstEnvs { ie_global = pkg_ie, ie_local = home_ie, ie_visible = vis_mods }) cls
+  = get home_ie ++ get pkg_ie
+  where
+    get :: InstEnv -> [ClsInst]
+    get ie = filter (instIsVisible vis_mods) (instEnvEltsForClassName ie cls)
 
 -- | Checks for an exact match of ClsInst in the instance environment.
 -- We use this when we do signature checking in "GHC.Tc.Module"

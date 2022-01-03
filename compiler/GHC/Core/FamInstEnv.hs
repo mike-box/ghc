@@ -16,7 +16,7 @@ module GHC.Core.FamInstEnv (
 
         FamInstEnvs, FamInstEnv, emptyFamInstEnv, emptyFamInstEnvs,
         unionFamInstEnv, extendFamInstEnv, extendFamInstEnvList,
-        famInstEnvElts, famInstEnvSize, familyInstances,
+        famInstEnvElts, famInstEnvSize, familyInstances, familyNameInstances,
 
         -- * CoAxioms
         mkCoAxBranch, mkBranchedCoAxiom, mkUnbranchedCoAxiom, mkSingleCoAxiom,
@@ -402,6 +402,13 @@ familyInstances (pkg_fie, home_fie) fam
   where
     get :: FamInstEnv -> [FamInst]
     get (FamIE _ env) = lookupRM [RML_KnownTc (tyConName fam)] env
+
+familyNameInstances :: (FamInstEnv, FamInstEnv) -> Name -> [FamInst]
+familyNameInstances (pkg_fie, home_fie) fam
+  = get home_fie ++ get pkg_fie
+  where
+    get :: FamInstEnv -> [FamInst]
+    get (FamIE _ env) = lookupRM [RML_KnownTc fam] env
 
 
 -- | Makes no particular effort to detect conflicts.
