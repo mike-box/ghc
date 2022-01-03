@@ -211,9 +211,11 @@ optCoercion opts env co
                  $$ hang (text "in_co:") 2 (ppr co)
                  $$ hang (text "in_ty1:") 2 (ppr in_ty1)
                  $$ hang (text "in_ty2:") 2 (ppr in_ty2)
+                 $$ hang (text "in_role:") 2 (ppr in_role)
                  $$ hang (text "out_co:") 2 (ppr out_co)
                  $$ hang (text "out_ty1:") 2 (ppr out_ty1)
                  $$ hang (text "out_ty2:") 2 (ppr out_ty2)
+                 $$ hang (text "out_role:") 2 (ppr out_role)
                  $$ hang (text "subst:") 2 (ppr env))
               out_co
 
@@ -392,6 +394,13 @@ opt_co4 opts env sym rep r (AxiomInstCo con ind cos)
                                  cos)
       -- Note that the_co does *not* have sym pushed into it
 
+opt_co4 _opts env sym rep r (HydrateDCo _r ty1 dco)
+  = assert (r == _r) $
+  -- SLD TODO: no idea what I'm doing here
+    wrapRole rep r $
+    wrapSym sym $
+    substCo (lcTCvSubst env) (mkHydrateDCo r (substTy (lcSubstLeft env) ty1) dco)
+
 opt_co4 opts env sym rep r (UnivCo prov _r t1 t2)
   = assert (r == _r )
     opt_univ opts env sym prov (chooseRole rep r) t1 t2
@@ -542,8 +551,12 @@ opt_co4 opts env sym _rep r (KindCo co)
   -- and substitution/optimization at the same time
 
 opt_co4 opts env sym _ r (SubCo co)
+  -- SLD TODO
   = assert (r == Representational) $
-    opt_co4_wrap opts env sym True Nominal co
+    let res = opt_co4_wrap opts env sym True Nominal co
+    in case coercionRole res of
+         Nominal -> SubCo res
+         _       -> res
 
 -- This could perhaps be optimized more.
 opt_co4 opts env sym rep r (AxiomRuleCo co cs)
@@ -601,7 +614,7 @@ See #19509.
 
  -}
 
-opt_univ :: OptCoercionOpts -> LiftingContext -> SymFlag -> UnivCoProvenance -> Role
+opt_univ :: OptCoercionOpts -> LiftingContext -> SymFlag -> UnivCoProvenance Coercion -> Role
          -> Type -> Type -> Coercion
 opt_univ opts env sym (PhantomProv h) _r ty1 ty2
   | sym       = mkPhantomCo h' ty2' ty1'
@@ -610,12 +623,6 @@ opt_univ opts env sym (PhantomProv h) _r ty1 ty2
     h' = opt_co4 opts env sym False Nominal h
     ty1' = substTy (lcSubstLeft  env) ty1
     ty2' = substTy (lcSubstRight env) ty2
-
-opt_univ _opts env sym (DCoProv dco) r ty1 ty2
---  = opt_univ opts env sym (PluginProv "AMG TODO") r ty1 ty2
-  -- AMG TODO: I don't know how to write this correctly, but the following is probably wrong.
-  | sym       = substCo (lcTCvSubst env) (mkSymCo (mkDCoCo r ty1 ty2 dco))
-  | otherwise = substCo (lcTCvSubst env) (mkDCoCo r ty1 ty2 dco)
 
 opt_univ opts env sym prov role oty1 oty2
 
@@ -678,7 +685,6 @@ opt_univ opts env sym prov role oty1 oty2
 #if __GLASGOW_HASKELL__ < 901
 -- This alt is redundant with the first match of the FunDef
       PhantomProv kco    -> PhantomProv $ opt_co4_wrap opts env sym False Nominal kco
-      DCoProv _          -> prov
 #endif
       ProofIrrelProv kco -> ProofIrrelProv $ opt_co4_wrap opts env sym False Nominal kco
       PluginProv _       -> prov
@@ -765,8 +771,6 @@ opt_trans_rule opts is in_co1@(UnivCo p1 r1 tyl1 _tyr1)
     opt_trans_prov (ProofIrrelProv kco1) (ProofIrrelProv kco2)
       = Just $ ProofIrrelProv $ opt_trans opts is kco1 kco2
     opt_trans_prov (PluginProv str1)     (PluginProv str2)     | str1 == str2 = Just p1
-    opt_trans_prov (DCoProv dco1)        (DCoProv dco2)
-      = Just $ DCoProv $ dco1 `mkTransDCo` dco2 -- AMG TODO ?
     opt_trans_prov _ _ = Nothing
 
 -- Push transitivity down through matching top-level constructors.
@@ -977,6 +981,7 @@ opt_trans_rule_app opts is orig_co1 orig_co2 co1a co1bs co2a co2bs
 fireTransRule :: String -> Coercion -> Coercion -> Coercion -> Maybe Coercion
 fireTransRule _rule _co1 _co2 res
   = Just res
+
 
 {-
 Note [Conflict checking with AxiomInstCo]

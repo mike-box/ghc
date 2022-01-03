@@ -3959,9 +3959,8 @@ optLevelFlags -- see Note [Documenting optimisation flags]
     , ([1,2],   Opt_SolveConstantDicts)
     , ([1,2],   Opt_NumConstantFolding)
 
--- AMG TODO: temporarily disabled as coercion optimization is currently broken
---    , ([0,1,2], Opt_OptCoercionSimple)
---    , ([1,2],   Opt_OptCoercionFull2)
+    , ([0,1,2], Opt_OptCoercionSimple)
+    , ([1,2],   Opt_OptCoercionFull2)
 
     , ([2],     Opt_LiberateCase)
     , ([2],     Opt_SpecConstr)
