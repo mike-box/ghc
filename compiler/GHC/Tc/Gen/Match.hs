@@ -78,6 +78,7 @@ import GHC.Types.SrcLoc
 
 import Control.Monad
 import Control.Arrow ( second )
+import GHC.Core.Type
 
 {-
 ************************************************************************
@@ -510,11 +511,27 @@ tcLcStmt m_tc ctxt (TransStmt { trS_form = form, trS_stmts = stmts
              unused_ty = pprPanic "tcLcStmt: inner ty" (ppr bindersMap)
              -- The inner 'stmts' lack a LastStmt, so the element type
              --  passed in to tcStmtsAndThen is never looked at
-       ; (stmts', (bndr_ids, by'))
+       ; (stmts', (bndr_ids, n_bndr_tys, by'))
             <- tcStmtsAndThen (TransStmtCtxt ctxt) (tcLcStmt m_tc) stmts unused_ty $ \_ -> do
                { by' <- traverse tcInferRho by
                ; bndr_ids <- tcLookupLocalIds bndr_names
-               ; return (bndr_ids, by') }
+               -- See #20864: ensure that each of the binders is lifted.
+               ; let bndr_cast_ty bndr_id
+                       = do { let ty = idType bndr_id
+                                  ki = typeKind ty
+                              -- Unify the kind with Type.
+                            ; k_co <- unifyKind (Just $ ppr bndr_id) ki liftedTypeKind
+                              -- Use the coercion to cast the type, and use this
+                              -- casted type going forward.
+                            ; let co = mkTcGReflLeftCo Nominal ty k_co
+                                  casted_ty = ty `mkCastTy` co
+                            ; traceTc "tcLcStmt binder" $
+                                vcat [ text "bndr =" <+> ppr bndr_id
+                                     , text "ki =" <+> ppr ki
+                                     , text "co =" <+> ppr co ]
+                            ; return (bndr_id, casted_ty) }
+               ; (bndr_ids, n_bndr_tys) <- mapAndUnzipM bndr_cast_ty bndr_ids
+               ; return (bndr_ids, n_bndr_tys, by') }
 
        ; let m_app ty = mkTyConApp m_tc [ty]
 
@@ -532,7 +549,7 @@ tcLcStmt m_tc ctxt (TransStmt { trS_form = form, trS_stmts = stmts
                           Nothing       -> \ty -> ty
                           Just (_,e_ty) -> \ty -> (alphaTy `mkVisFunTyMany` e_ty) `mkVisFunTyMany` ty
 
-             tup_ty        = mkBigCoreVarTupTy bndr_ids
+             tup_ty        = mkBigCoreTupTy n_bndr_tys
              poly_arg_ty   = m_app alphaTy
              poly_res_ty   = m_app (n_app alphaTy)
              using_poly_ty = mkInfForAllTy alphaTyVar $
@@ -545,13 +562,13 @@ tcLcStmt m_tc ctxt (TransStmt { trS_form = form, trS_stmts = stmts
              -- 'stmts' returns a result of type (m1_ty tuple_ty),
              -- typically something like [(Int,Bool,Int)]
              -- We don't know what tuple_ty is yet, so we use a variable
-       ; let mk_n_bndr :: Name -> TcId -> TcId
-             mk_n_bndr n_bndr_name bndr_id = mkLocalId n_bndr_name Many (n_app (idType bndr_id))
+       ; let mk_n_bndr :: Name -> TcType -> TcId
+             mk_n_bndr n_bndr_name bndr_ty = mkLocalId n_bndr_name Many (n_app bndr_ty)
 
              -- Ensure that every old binder of type `b` is linked up with its
              -- new binder which should have type `n b`
              -- See Note [GroupStmt binder map] in GHC.Hs.Expr
-             n_bndr_ids  = zipWith mk_n_bndr n_bndr_names bndr_ids
+             n_bndr_ids  = zipWith mk_n_bndr n_bndr_names n_bndr_tys
              bindersMap' = bndr_ids `zip` n_bndr_ids
 
        -- Type check the thing in the environment with
