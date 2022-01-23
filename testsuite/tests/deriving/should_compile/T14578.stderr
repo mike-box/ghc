@@ -5,90 +5,121 @@ Derived class instances:
             GHC.Base.Semigroup a) =>
            GHC.Base.Semigroup (T14578.Wat f g a) where
     (GHC.Base.<>) ::
-      T14578.Wat f g a -> T14578.Wat f g a -> T14578.Wat f g a
+      T14578.Wat f[sk:1] g[sk:1] a[sk:1]
+      -> T14578.Wat f[sk:1] g[sk:1] a[sk:1]
+      -> T14578.Wat f[sk:1] g[sk:1] a[sk:1]
     GHC.Base.sconcat ::
-      GHC.Base.NonEmpty (T14578.Wat f g a) -> T14578.Wat f g a
+      GHC.Base.NonEmpty (T14578.Wat f[sk:1] g[sk:1] a[sk:1])
+      -> T14578.Wat f[sk:1] g[sk:1] a[sk:1]
     GHC.Base.stimes ::
-      forall (b :: *).
-      GHC.Real.Integral b => b -> T14578.Wat f g a -> T14578.Wat f g a
+      forall (b :: *). GHC.Real.Integral b =>
+                       b
+                       -> T14578.Wat f[sk:1] g[sk:1] a[sk:1]
+                       -> T14578.Wat f[sk:1] g[sk:1] a[sk:1]
     (GHC.Base.<>)
       = GHC.Prim.coerce
-          @(T14578.App (Data.Functor.Compose.Compose f g) a
-            -> T14578.App (Data.Functor.Compose.Compose f g) a
-               -> T14578.App (Data.Functor.Compose.Compose f g) a)
-          @(T14578.Wat f g a -> T14578.Wat f g a -> T14578.Wat f g a)
-          ((GHC.Base.<>) @(T14578.App (Data.Functor.Compose.Compose f g) a))
+          @(T14578.App (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1]
+            -> T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1]
+            -> T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1])
+          @(T14578.Wat f[sk:1] g[sk:1] a[sk:1]
+            -> T14578.Wat f[sk:1] g[sk:1] a[sk:1]
+            -> T14578.Wat f[sk:1] g[sk:1] a[sk:1])
+          ((GHC.Base.<>)
+             @(T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1]))
     GHC.Base.sconcat
       = GHC.Prim.coerce
-          @(GHC.Base.NonEmpty (T14578.App (Data.Functor.Compose.Compose f g) a)
-            -> T14578.App (Data.Functor.Compose.Compose f g) a)
-          @(GHC.Base.NonEmpty (T14578.Wat f g a) -> T14578.Wat f g a)
+          @(GHC.Base.NonEmpty
+              (T14578.App (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1])
+            -> T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1])
+          @(GHC.Base.NonEmpty (T14578.Wat f[sk:1] g[sk:1] a[sk:1])
+            -> T14578.Wat f[sk:1] g[sk:1] a[sk:1])
           (GHC.Base.sconcat
-             @(T14578.App (Data.Functor.Compose.Compose f g) a))
+             @(T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1]))
     GHC.Base.stimes
       = GHC.Prim.coerce
           @(b
-            -> T14578.App (Data.Functor.Compose.Compose f g) a
-               -> T14578.App (Data.Functor.Compose.Compose f g) a)
-          @(b -> T14578.Wat f g a -> T14578.Wat f g a)
+            -> T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1]
+            -> T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1])
+          @(b
+            -> T14578.Wat f[sk:1] g[sk:1] a[sk:1]
+            -> T14578.Wat f[sk:1] g[sk:1] a[sk:1])
           (GHC.Base.stimes
-             @(T14578.App (Data.Functor.Compose.Compose f g) a))
+             @(T14578.App
+                 (Data.Functor.Compose.Compose f[sk:1] g[sk:1]) a[sk:1]))
   
   instance GHC.Base.Functor f =>
            GHC.Base.Functor (T14578.App f) where
     GHC.Base.fmap ::
-      forall (a :: *) (b :: *).
-      (a -> b) -> T14578.App f a -> T14578.App f b
+      forall (a :: *) (b :: *). (a -> b)
+                                -> T14578.App f[sk:1] a -> T14578.App f[sk:1] b
     (GHC.Base.<$) ::
-      forall (a :: *) (b :: *). a -> T14578.App f b -> T14578.App f a
+      forall (a :: *) (b :: *). a
+                                -> T14578.App f[sk:1] b -> T14578.App f[sk:1] a
     GHC.Base.fmap
       = GHC.Prim.coerce
-          @((a -> b) -> f a -> f b)
-          @((a -> b) -> T14578.App f a -> T14578.App f b) (GHC.Base.fmap @f)
+          @((a -> b) -> f[sk:1] a -> f[sk:1] b)
+          @((a -> b) -> T14578.App f[sk:1] a -> T14578.App f[sk:1] b)
+          (GHC.Base.fmap @f[sk:1])
     (GHC.Base.<$)
       = GHC.Prim.coerce
-          @(a -> f b -> f a) @(a -> T14578.App f b -> T14578.App f a)
-          ((GHC.Base.<$) @f)
+          @(a -> f[sk:1] b -> f[sk:1] a)
+          @(a -> T14578.App f[sk:1] b -> T14578.App f[sk:1] a)
+          ((GHC.Base.<$) @f[sk:1])
   
   instance GHC.Base.Applicative f =>
            GHC.Base.Applicative (T14578.App f) where
-    GHC.Base.pure :: forall (a :: *). a -> T14578.App f a
+    GHC.Base.pure :: forall (a :: *). a -> T14578.App f[sk:1] a
     (GHC.Base.<*>) ::
-      forall (a :: *) (b :: *).
-      T14578.App f (a -> b) -> T14578.App f a -> T14578.App f b
+      forall (a :: *) (b :: *). T14578.App f[sk:1] (a -> b)
+                                -> T14578.App f[sk:1] a -> T14578.App f[sk:1] b
     GHC.Base.liftA2 ::
-      forall (a :: *) (b :: *) (c :: *).
-      (a -> b -> c) -> T14578.App f a -> T14578.App f b -> T14578.App f c
+      forall (a :: *) (b :: *) (c :: *). (a -> b -> c)
+                                         -> T14578.App f[sk:1] a
+                                         -> T14578.App f[sk:1] b
+                                         -> T14578.App f[sk:1] c
     (GHC.Base.*>) ::
-      forall (a :: *) (b :: *).
-      T14578.App f a -> T14578.App f b -> T14578.App f b
+      forall (a :: *) (b :: *). T14578.App f[sk:1] a
+                                -> T14578.App f[sk:1] b -> T14578.App f[sk:1] b
     (GHC.Base.<*) ::
-      forall (a :: *) (b :: *).
-      T14578.App f a -> T14578.App f b -> T14578.App f a
+      forall (a :: *) (b :: *). T14578.App f[sk:1] a
+                                -> T14578.App f[sk:1] b -> T14578.App f[sk:1] a
     GHC.Base.pure
       = GHC.Prim.coerce
-          @(a -> f a) @(a -> T14578.App f a) (GHC.Base.pure @f)
+          @(a -> f[sk:1] a) @(a -> T14578.App f[sk:1] a)
+          (GHC.Base.pure @f[sk:1])
     (GHC.Base.<*>)
       = GHC.Prim.coerce
-          @(f (a -> b) -> f a -> f b)
-          @(T14578.App f (a -> b) -> T14578.App f a -> T14578.App f b)
-          ((GHC.Base.<*>) @f)
+          @(f[sk:1] (a -> b) -> f[sk:1] a -> f[sk:1] b)
+          @(T14578.App f[sk:1] (a -> b)
+            -> T14578.App f[sk:1] a -> T14578.App f[sk:1] b)
+          ((GHC.Base.<*>) @f[sk:1])
     GHC.Base.liftA2
       = GHC.Prim.coerce
-          @((a -> b -> c) -> f a -> f b -> f c)
+          @((a -> b -> c) -> f[sk:1] a -> f[sk:1] b -> f[sk:1] c)
           @((a -> b -> c)
-            -> T14578.App f a -> T14578.App f b -> T14578.App f c)
-          (GHC.Base.liftA2 @f)
+            -> T14578.App f[sk:1] a
+            -> T14578.App f[sk:1] b
+            -> T14578.App f[sk:1] c)
+          (GHC.Base.liftA2 @f[sk:1])
     (GHC.Base.*>)
       = GHC.Prim.coerce
-          @(f a -> f b -> f b)
-          @(T14578.App f a -> T14578.App f b -> T14578.App f b)
-          ((GHC.Base.*>) @f)
+          @(f[sk:1] a -> f[sk:1] b -> f[sk:1] b)
+          @(T14578.App f[sk:1] a
+            -> T14578.App f[sk:1] b -> T14578.App f[sk:1] b)
+          ((GHC.Base.*>) @f[sk:1])
     (GHC.Base.<*)
       = GHC.Prim.coerce
-          @(f a -> f b -> f a)
-          @(T14578.App f a -> T14578.App f b -> T14578.App f a)
-          ((GHC.Base.<*) @f)
+          @(f[sk:1] a -> f[sk:1] b -> f[sk:1] a)
+          @(T14578.App f[sk:1] a
+            -> T14578.App f[sk:1] b -> T14578.App f[sk:1] a)
+          ((GHC.Base.<*) @f[sk:1])
   
 
 Derived type family instances:

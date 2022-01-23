@@ -1156,14 +1156,36 @@ mkEqnHelp :: Maybe OverlapMode
 mkEqnHelp overlap_mode tvs cls cls_args deriv_ctxt deriv_strat = do
   is_boot <- tcIsHsBootOrSig
   when is_boot $ bale_out DerivErrBootFileFound
+  deriv_env <- mk_deriv_env
   runReaderT mk_eqn deriv_env
   where
-    deriv_env = DerivEnv { denv_overlap_mode = overlap_mode
-                         , denv_tvs          = tvs
-                         , denv_cls          = cls
-                         , denv_inst_tys     = cls_args
-                         , denv_ctxt         = deriv_ctxt
-                         , denv_strat        = deriv_strat }
+    mk_deriv_env :: TcRn DerivEnv
+    mk_deriv_env = do
+      let pred = mkClassPred cls cls_args
+      skol_info <- mkSkolemInfo (DerivSkol pred)
+      (tvs', cls_args', deriv_strat') <-
+        case deriv_ctxt of
+          SupplyContext{} -> pure (tvs, cls_args, deriv_strat)
+          -- TODO RGS: Document what is going on here, and cite
+          -- Note [Gathering and simplifying constraints for DeriveAnyClass]
+          InferContext{} -> do
+            (skol_subst, tvs') <- tcInstSkolTyVars skol_info tvs -- Skolemize
+                -- The constraint solving machinery
+                -- expects *TcTyVars* not TyVars.
+                -- We use *non-overlappable* (vanilla) skolems
+                -- See Note [Overlap and deriving] in GHC.Tc.Deriv.Infer.
+
+            let cls_args'    = substTys skol_subst cls_args
+                deriv_strat' = fmap (mapDerivStrategy (substTy skol_subst))
+                                    deriv_strat
+            pure (tvs', cls_args', deriv_strat')
+      pure $ DerivEnv { denv_overlap_mode = overlap_mode
+                      , denv_tvs          = tvs'
+                      , denv_cls          = cls
+                      , denv_inst_tys     = cls_args'
+                      , denv_skol_info    = skol_info
+                      , denv_ctxt         = deriv_ctxt
+                      , denv_strat        = deriv_strat' }
 
     bale_out =
       failWithTc . TcRnCannotDeriveInstance cls cls_args deriv_strat NoGeneralizedNewtypeDeriving
@@ -1327,6 +1349,7 @@ mk_eqn_from_mechanism mechanism
                 , denv_tvs          = tvs
                 , denv_cls          = cls
                 , denv_inst_tys     = inst_tys
+                , denv_skol_info    = skol_info
                 , denv_ctxt         = deriv_ctxt } <- ask
        doDerivInstErrorChecks1 mechanism
        loc       <- lift getSrcSpanM
@@ -1340,6 +1363,7 @@ mk_eqn_from_mechanism mechanism
                    , ds_name = dfun_name, ds_tvs = tvs'
                    , ds_cls = cls, ds_tys = inst_tys'
                    , ds_theta = inferred_constraints
+                   , ds_skol_info = skol_info
                    , ds_overlap = overlap_mode
                    , ds_standalone_wildcard = wildcard
                    , ds_mechanism = mechanism' } }
@@ -1350,6 +1374,7 @@ mk_eqn_from_mechanism mechanism
                    , ds_name = dfun_name, ds_tvs = tvs
                    , ds_cls = cls, ds_tys = inst_tys
                    , ds_theta = theta
+                   , ds_skol_info = skol_info
                    , ds_overlap = overlap_mode
                    , ds_standalone_wildcard = Nothing
                    , ds_mechanism = mechanism }

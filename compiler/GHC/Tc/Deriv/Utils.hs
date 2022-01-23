@@ -102,6 +102,8 @@ data DerivEnv = DerivEnv
     -- ^ Class for which we need to derive an instance
   , denv_inst_tys     :: [Type]
     -- ^ All arguments to 'denv_cls' in the derived instance.
+  , denv_skol_info    :: SkolemInfo
+    -- ^ TODO RGS: What is this?
   , denv_ctxt         :: DerivContext
     -- ^ @'SupplyContext' theta@ for standalone deriving (where @theta@ is the
     --   context of the instance).
@@ -118,6 +120,7 @@ instance Outputable DerivEnv where
                 , denv_tvs          = tvs
                 , denv_cls          = cls
                 , denv_inst_tys     = inst_tys
+                , denv_skol_info    = skol_info
                 , denv_ctxt         = ctxt
                 , denv_strat        = mb_strat })
     = hang (text "DerivEnv")
@@ -125,6 +128,7 @@ instance Outputable DerivEnv where
                  , text "denv_tvs"          <+> ppr tvs
                  , text "denv_cls"          <+> ppr cls
                  , text "denv_inst_tys"     <+> ppr inst_tys
+                 , text "denv_skol_info"    <+> ppr skol_info
                  , text "denv_ctxt"         <+> ppr ctxt
                  , text "denv_strat"        <+> ppr mb_strat ])
 
@@ -134,6 +138,7 @@ data DerivSpec theta = DS { ds_loc                 :: SrcSpan
                           , ds_theta               :: theta
                           , ds_cls                 :: Class
                           , ds_tys                 :: [Type]
+                          , ds_skol_info           :: SkolemInfo
                           , ds_overlap             :: Maybe OverlapMode
                           , ds_standalone_wildcard :: Maybe SrcSpan
                               -- See Note [Inferring the instance context]
@@ -146,6 +151,8 @@ data DerivSpec theta = DS { ds_loc                 :: SrcSpan
 
         -- the theta is either the given and final theta, in standalone deriving,
         -- or the not-yet-simplified list of constraints together with their origin
+
+        -- TODO RGS: What is the ds_skol_info?
 
         -- ds_mechanism specifies the means by which GHC derives the instance.
         -- See Note [Deriving strategies] in GHC.Tc.Deriv
@@ -164,7 +171,7 @@ Example:
 
 pprDerivSpec :: Outputable theta => DerivSpec theta -> SDoc
 pprDerivSpec (DS { ds_loc = l, ds_name = n, ds_tvs = tvs, ds_cls = c,
-                   ds_tys = tys, ds_theta = rhs,
+                   ds_tys = tys, ds_theta = rhs, ds_skol_info = skol_info,
                    ds_standalone_wildcard = wildcard, ds_mechanism = mech })
   = hang (text "DerivSpec")
        2 (vcat [ text "ds_loc                  =" <+> ppr l
@@ -173,6 +180,7 @@ pprDerivSpec (DS { ds_loc = l, ds_name = n, ds_tvs = tvs, ds_cls = c,
                , text "ds_cls                  =" <+> ppr c
                , text "ds_tys                  =" <+> ppr tys
                , text "ds_theta                =" <+> ppr rhs
+               , text "ds_skol_info            =" <+> ppr skol_info
                , text "ds_standalone_wildcard  =" <+> ppr wildcard
                , text "ds_mechanism            =" <+> ppr mech ])
 
