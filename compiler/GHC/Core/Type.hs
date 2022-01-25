@@ -651,8 +651,8 @@ expandTypeSynonyms ty
     go_dco subst (AppDCo co arg)
       = mkAppDCo (go_dco subst co) (go_dco subst arg)
     go_dco subst (ForAllDCo tv kind_dco co)
-      = let (subst', tv', kind_co') = go_cobndr subst tv (mkHydrateDCo Nominal (varType tv) kind_dco) in
-        mkForAllDCo tv' (mkDehydrateCo kind_co') (go_dco subst' co)
+      = let (subst', tv', kind_dco') = go_dcobndr subst tv kind_dco in
+        mkForAllDCo tv' kind_dco' (go_dco subst' co)
     go_dco subst (CoVarDCo cv)
       = mkDehydrateCo (substCoVar subst cv)
     go_dco _     dco@AxiomInstDCo{}
@@ -673,7 +673,8 @@ expandTypeSynonyms ty
       -- substForAllCoBndrUsing, which is general enough to
       -- handle coercion optimization (which sometimes swaps the
       -- order of a coercion)
-    go_cobndr subst = substForAllCoBndrUsing False (go_co subst) subst
+    go_cobndr  subst = substForAllCoBndrUsing Co  False (go subst) (go_co  subst) subst
+    go_dcobndr subst = substForAllCoBndrUsing DCo False (go subst) (go_dco subst) subst
 
 -- | An INLINE helper for function such as 'kindRep_maybe' below.
 --

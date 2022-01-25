@@ -1,5 +1,6 @@
 
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE GADTs #-}
 
 {-# OPTIONS_HADDOCK not-home #-}
 
@@ -42,6 +43,7 @@ module GHC.Core.TyCo.Rep (
         MCoercion(..), MCoercionR, MCoercionN,
 
         DCoercion(..), DCoercionN, KindDCoercion,
+        CoOrDCo(..),
 
         -- * Functions over types
         mkNakedTyConTy, mkTyVarTy, mkTyVarTys,
@@ -1641,6 +1643,13 @@ data DCoercion
 instance Outputable DCoercion where
   ppr = pprDCo
 
+data CoOrDCo co_or_dco where
+  Co  :: CoOrDCo Coercion
+  DCo :: CoOrDCo DCoercion
+
+instance Outputable (CoOrDCo co_or_dco) where
+  ppr Co  = text "Co"
+  ppr DCo = text "DCo"
 
 {-
 

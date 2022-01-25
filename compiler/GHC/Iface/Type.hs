@@ -1776,8 +1776,9 @@ ppr_co _ (IfaceFreeCoVar covar) = ppr covar
 ppr_co _ (IfaceCoVarCo covar)   = ppr covar
 ppr_co _ (IfaceHoleCo covar)    = braces (ppr covar)
 
-ppr_co _ (IfaceHydrateDCo role ty1 dco)
-  = text "Hydrate" <> (parens $ ppr role <+> ppr_ty appPrec ty1 <+> pprParendIfaceDCoercion dco)
+ppr_co ctxt_prec (IfaceHydrateDCo role ty1 dco)
+  = maybeParen ctxt_prec appPrec $
+    text "Hydrate" <+> (ppr role <+> ppr_ty appPrec ty1 <+> pprParendIfaceDCoercion dco)
 ppr_co _ (IfaceUnivCo prov role ty1 ty2)
   = text "Univ" <> (parens $
       sep [ ppr role <+> pprIfaceUnivCoProv pprParendIfaceCoercion prov
@@ -1868,7 +1869,7 @@ ppr_dco ctxt_prec (IfaceTransDCo co1 co2)
     in maybeParen ctxt_prec opPrec $
         vcat (ppr_dco topPrec co1 : ppr_trans co2)
 ppr_dco ctxt_prec (IfaceDehydrateCo co)
-  = maybeParen ctxt_prec appPrec
+  = maybeParen ctxt_prec funPrec
   $ text "Dehydrate" <+> pprParendIfaceCoercion co
 ppr_dco _ (IfaceUnivDCo prov rhs)
   = text "UnivDCo" <> (parens $

@@ -33,7 +33,8 @@ module GHC.Core.TyCo.FVs
         -- Any and No Free vars
         anyFreeVarsOfType, anyFreeVarsOfTypes,
         anyFreeVarsOfCo, anyFreeVarsOfDCo,
-        noFreeVarsOfType, noFreeVarsOfTypes, noFreeVarsOfCo,
+        noFreeVarsOfType, noFreeVarsOfTypes,
+        noFreeVarsOfCo, noFreeVarsOfDCo,
 
         -- * Well-scoped free variables
         scopedSort, tyCoVarsOfTypeWellScoped,
@@ -980,6 +981,10 @@ noFreeVarsOfTypes tys = not $ DM.getAny (f tys)
 noFreeVarsOfCo :: Coercion -> Bool
 noFreeVarsOfCo co = not $ DM.getAny (f co)
   where (_, _, f, _, _, _) = foldTyCo (afvFolder (const True)) emptyVarSet
+
+noFreeVarsOfDCo :: DCoercion -> Bool
+noFreeVarsOfDCo dco = not $ DM.getAny (f dco)
+  where (_, _, _, _, f, _) = foldTyCo (afvFolder (const True)) emptyVarSet
 
 
 {- *********************************************************************

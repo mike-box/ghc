@@ -331,15 +331,19 @@ mkAppRedn (Reduction co1 ty1) (Reduction co2 ty2)
 -- Combines 'mkFunCo' and 'mkFunTy'.
 mkFunRedn :: AnonArgFlag
           -> ReductionN -- ^ multiplicity reduction
+          -> DCoercionN -- ^ argument 'RuntimeRep' coercion
+          -> DCoercionN -- ^ result 'RuntimeRep' coercion
           -> Reduction  -- ^ argument reduction
           -> Reduction  -- ^ result reduction
           -> Reduction
 mkFunRedn vis
   (Reduction w_co w_ty)
+  arg_repco
+  res_repco
   (Reduction arg_co arg_ty)
   (Reduction res_co res_ty)
     = mkReduction
-        (mkFunDCo w_co arg_co res_co)
+        (mkFunDCo w_co arg_repco res_repco arg_co res_co)
         (mkFunTy vis w_ty arg_ty res_ty)
 {-# INLINE mkFunRedn #-}
 

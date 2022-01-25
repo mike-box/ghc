@@ -1097,9 +1097,6 @@ The lookupFamInstEnv function does a nice job for *open* type families,
 but we also need to handle closed ones when normalising a type:
 -}
 
--- SLD TODO: use DCoercion directly in the body of reduceTyFamApp_maybe,
--- instead of using Coercion and then dehydrating.
-
 -- | Attempt to do a *one-step* reduction of a type-family application
 --    but *not* newtypes
 -- Works on type-synonym families always; data-families only if
@@ -1300,8 +1297,8 @@ topNormaliseType_maybe :: FamInstEnvs -> Type -> Maybe Reduction
 -- Always operates homogeneously: the returned type has the same kind as the
 -- original type, and the returned coercion is always homogeneous.
 topNormaliseType_maybe env ty
-  = do { ((co, mkind_co), nty) <- topNormaliseTypeX stepper combine ty
-       ; let hredn = mkHetReduction (mkReduction co nty) mkind_co
+  = do { ((dco, mkind_co), nty) <- topNormaliseTypeX stepper combine ty
+       ; let hredn = mkHetReduction (mkReduction dco nty) mkind_co
        ; return $ homogeniseHetRedn hredn }
   where
     stepper = unwrapNewTypeStepper' `composeSteppers` tyFamStepper
@@ -1361,8 +1358,9 @@ normalise_tc_app tc tys
        ; role <- getRole
        ; return $
            assemble_result (mkTyConAppRedn_MightBeSynonym role tc tys redns) res_co }
-             -- SLD TODO (LC): mkTyConAppRedn_MightBeSynonym calls mkHydrateDCo,
-             -- so this can be wrong if "tys" are insufficiently zonked.
+             -- NB: we assume "tys" satisfy the hydration invariant from
+             -- Note [The Hydration invariant] in GHC.Core.Coercion,
+             -- because the "normalise" functions all only deal with fully zonked types.
 
   where
     assemble_result :: Reduction   -- orig_ty ~r nty, possibly heterogeneous (nty possibly of changed kind)
@@ -1430,7 +1428,10 @@ normalise_type ty
       = do { arg_redn <- go ty1
            ; res_redn <- go ty2
            ; w_redn <- withRole Nominal $ go w
-           ; return $ mkFunRedn vis w_redn arg_redn res_redn }
+           ; return $ mkFunRedn vis w_redn mkReflDCo mkReflDCo arg_redn res_redn
+              -- NB: normalise_type is homogeneous, so we can use ReflDCo
+              -- for the kind coercions.
+           }
     go (ForAllTy (Bndr tcvar vis) ty)
       = do { (lc', tv', k_redn) <- normalise_var_bndr tcvar
            ; redn <- withLC lc' $ normalise_type ty
@@ -1517,8 +1518,9 @@ normalise_var_bndr tcvar
        ; let
            do_normalise ki      = do { redn <- normalise_type ki; return (ki, redn) }
            view_co (ki, redn)   = reductionCoercion Nominal ki redn
-             -- SLD TODO (LC): this call to reductionCoercion uses mkHydrateDCo
-             -- which could cause problems if 'ki' is not zonked?
+             -- NB: the hydration invariant from Note [The Hydration invariant] in GHC.Core.Coercion
+             -- must be satisfied by 'ki' in order to call 'reductionCoercion' here.
+
            callback lc ki       = runNormM (do_normalise ki) env lc Nominal
            (lc2, tv, (_, redn)) = liftCoSubstVarBndrUsing view_co callback lc1 tcvar
        ; return (lc2, tv, redn) }

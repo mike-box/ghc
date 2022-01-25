@@ -554,14 +554,16 @@ rewrite_one (FunTy { ft_af = vis, ft_mult = mult, ft_arg = ty1, ft_res = ty2 })
                        (rewrite_one res_rep)
        ; role <- getRole
 
-       ; let arg_rep_co = reductionCoercion role arg_rep arg_rep_redn
+       ; let arg_rep_dco = reductionDCoercion arg_rep_redn
+             arg_rep_co = mkHydrateDCo role arg_rep arg_rep_dco
                 -- :: arg_rep ~ arg_rep_xi
              arg_ki_co  = mkTyConAppCo Nominal tYPETyCon [arg_rep_co]
                 -- :: TYPE arg_rep ~ TYPE arg_rep_xi
              casted_arg_redn = mkCoherenceRightRedn arg_redn arg_ki_co
                 -- :: ty1 ~> arg_xi |> arg_ki_co
 
-             res_rep_co = reductionCoercion role res_rep res_rep_redn
+             res_rep_dco = reductionDCoercion res_rep_redn
+             res_rep_co = mkHydrateDCo role res_rep res_rep_dco
              res_ki_co  = mkTyConAppCo Nominal tYPETyCon [res_rep_co]
              casted_res_redn = mkCoherenceRightRedn res_redn res_ki_co
 
@@ -569,7 +571,7 @@ rewrite_one (FunTy { ft_af = vis, ft_mult = mult, ft_arg = ty1, ft_res = ty2 })
           -- be done if we used TyConApp instead of FunTy. These rewritten
           -- representations are seen only in casts of the arg and res, below.
           -- Forgetting this caused #19677.
-       ; return $ mkFunRedn vis w_redn casted_arg_redn casted_res_redn }
+       ; return $ mkFunRedn vis w_redn arg_rep_dco res_rep_dco casted_arg_redn casted_res_redn }
 
 rewrite_one ty@(ForAllTy {})
 -- TODO (RAE): This is inadequate, as it doesn't rewrite the kind of

@@ -119,7 +119,8 @@ module GHC.Core.Coercion (
 
         mkLiftingContext,
         mkSubstLiftingContext, zapLiftingContext,
-        substForAllCoBndrUsingLC, lcTCvSubst, lcInScopeSet,
+        substForAllCoBndrUsingLC, substForAllDCoBndrUsingLC,
+        lcTCvSubst, lcInScopeSet,
 
         LiftCoEnv, LiftingContext(..), liftEnvSubstLeft, liftEnvSubstRight,
         substRightCo, substLeftCo, swapLiftCoEnv, lcSubstLeft, lcSubstRight,
@@ -890,12 +891,19 @@ mkTyConAppDCo cos
   | all isReflDCo cos = mkReflDCo -- See Note [Refl invariant]
   | otherwise         = TyConAppDCo cos
 
--- | Build a function 'Coercion' from two other 'Coercion's. That is,
--- given @co1 :: a ~ b@ and @co2 :: x ~ y@ produce @co :: (a -> x) ~ (b -> y)@.
--- See Note [Function coercions].
-mkFunDCo :: DCoercionN -> DCoercion -> DCoercion -> DCoercion
-mkFunDCo w co1 co2 = mkTyConAppDCo [w, ReflDCo, ReflDCo, co1, co2] -- AMG TODO: perhaps we should have FunDCo?
--- AMG TODO: are the ReflDCos correct if co1/co2 are heterogeneous?
+-- | Like 'mkTyConAppDCo', but specialised to the function arrow.
+--
+-- Unlike for 'Coercion', for 'DCoercion' the function arrow does not
+-- have special treatment, so this is just a helper function around
+-- 'mkTyConAppDCo'.
+mkFunDCo :: DCoercionN -- ^ multiplicity
+         -> DCoercionN -- ^ argument representation
+         -> DCoercionN -- ^ result representation
+         -> DCoercion  -- ^ argument
+         -> DCoercion  -- ^ result
+         -> DCoercion
+mkFunDCo w repco1 repco2 co1 co2 =
+  mkTyConAppDCo [w, repco1, repco2, co1, co2]
 
 mkAppDCo :: DCoercion     -- ^ :: t1 ~r t2
          -> DCoercion     -- ^ :: s1 ~N s2, where s1 :: k1, s2 :: k2
@@ -909,11 +917,42 @@ mkAppDCos :: DCoercion
          -> DCoercion
 mkAppDCos co1 cos = foldl' mkAppDCo co1 cos
 
+-- | Compose two directed coercions, doing some
+-- simplifications of the form:
+--
+--  - co ; Refl --> co
+--  - Refl ; co --> co
+--  - StepsDCo n ; StepsDCo m --> StepsDCo (n + m)
+--
+-- Avoids recursing into the LHS coercion.
 mkTransDCo :: DCoercion -> DCoercion -> DCoercion
-mkTransDCo ReflDCo co = co
-mkTransDCo co ReflDCo = co
-mkTransDCo (StepsDCo m) (StepsDCo n) = StepsDCo (m+n)
-mkTransDCo co1 co2    = TransDCo co1 co2
+mkTransDCo dco1 dco2
+  | isReflDCo dco2
+  = dco1
+  | otherwise
+  = mk_trans_dco dco1 dco2
+
+  where
+
+    -- invariant: RHS is not Refl
+    mk_trans_dco (dco1a `TransDCo` dco1b) dco2
+      = dco1a `TransDCo` (mk_trans_dco dco1b dco2)
+    mk_trans_dco dco1 (dco2a `TransDCo` dco2b)
+      | isReflDCo dco1
+      = dco2a `mkTransDCo` dco2b
+      | otherwise
+      = mk_trans_dco dco1 dco2a `mkTransDCo` dco2b
+    mk_trans_dco dco1 dco2
+      | isReflDCo dco1
+      = dco2
+      | otherwise
+      = cancel_steps dco1 dco2
+
+    -- invariant: neither argument is Refl or TransDCo
+    cancel_steps (StepsDCo m) (StepsDCo n)
+      = StepsDCo (m + n)
+    cancel_steps dco1 dco2
+      = TransDCo dco1 dco2
 
 -- | Make a Coercion from a tycovar, a kind coercion, and a body coercion.
 -- The kind of the tycovar should be the left-hand kind of the kind coercion.
@@ -936,7 +975,7 @@ mkForAllDCo_NoRefl v kind_dco dco
   , assert (not (isReflDCo dco)) True
   , isCoVar v
   , not (v `elemVarSet` tyCoVarsOfDCo dco)
-  = mkFunDCo mkReflDCo kind_dco dco
+  = mkFunDCo mkReflDCo mkReflDCo mkReflDCo kind_dco dco
       -- Functions from coercions are always unrestricted
   | otherwise
   = ForAllDCo v kind_dco dco
@@ -1018,7 +1057,7 @@ in Note [The Purely Kinded Type Invariant (PKTI)] in GHC.Tc.Gen.HsType:
 -- removing inner directed coercions, use 'fullyHydrateDCo'.
 --
 -- NB: the LHS type must uphold the invariant of Note [The Hydration invariant]:
--- it must be sufficiently for the structure of the directed coercion to be visible.
+-- it must be sufficiently zonked for the structure of the directed coercion to be visible.
 mkHydrateDCo :: Role -> Type -> DCoercion -> Coercion
 mkHydrateDCo r ty ReflDCo          = mkReflCo r ty
 mkHydrateDCo _ _  (CoVarDCo cv)    = CoVarCo cv
@@ -1154,7 +1193,11 @@ expandDCo r l_ty dco@(StepsDCo n)
   = (co `mkTransCo` co', ty')
 
   | otherwise
-  = pprPanic "expandDCo" (text "Bad AxiomRuleDCo: " <+> ppr r <+> ppr l_ty <+> ppr dco)
+  = pprPanic "expandDCo: Bad StepsDCo" $ vcat
+     [text "role:" <+> ppr r
+     ,text "l_ty:" <+> ppr l_ty
+     ,text "dco:"  <+> ppr dco
+     ]
 
 expandDCo r l_ty (TransDCo dco1 dco2)
   = let
@@ -1215,13 +1258,17 @@ mkDehydrateCo (SubCo co) = mkDehydrateCo co
   -- SLD TODO: causes a role mismatch in T13410,
   -- probably because of overly restrictive Core Lint checks.
 -}
+mkDehydrateCo (CoVarCo cv)
+  = CoVarDCo cv
 mkDehydrateCo co
   = DehydrateCo co
 
 singleStepDCo :: DCoercion
 singleStepDCo = StepsDCo 1
 
-mkUnivDCo :: UnivCoProvenance DCoercion -> Type -> DCoercion
+mkUnivDCo :: UnivCoProvenance DCoercion
+          -> Type -- RHS type
+          -> DCoercion
 mkUnivDCo = UnivDCo
 
 mkCoVarDCo :: CoVar -> DCoercion
@@ -1688,7 +1735,8 @@ mkSubCo co = assertPpr (coercionRole co == Nominal) (ppr co <+> ppr (coercionRol
              SubCo co
 
 -- | Changes a role, but only a downgrade. See Note [Role twiddling functions]
-downgradeRole_maybe :: Role   -- ^ desired role
+downgradeRole_maybe :: HasDebugCallStack
+                    => Role   -- ^ desired role
                     -> Role   -- ^ current role
                     -> Coercion -> Maybe Coercion
 -- In (downgradeRole_maybe dr cr co) it's a precondition that
@@ -1706,7 +1754,8 @@ downgradeRole_maybe Phantom          _                co = Just (toPhantomCo co)
 
 -- | Like 'downgradeRole_maybe', but panics if the change isn't a downgrade.
 -- See Note [Role twiddling functions]
-downgradeRole :: Role  -- desired role
+downgradeRole :: HasDebugCallStack
+              => Role  -- desired role
               -> Role  -- current role
               -> Coercion -> Coercion
 downgradeRole r1 r2 co
@@ -2497,13 +2546,25 @@ zapLiftingContext (LC subst _) = LC (zapTCvSubst subst) emptyVarEnv
 
 -- | Like 'substForAllCoBndr', but works on a lifting context
 substForAllCoBndrUsingLC :: Bool
-                            -> (Coercion -> Coercion)
-                            -> LiftingContext -> TyCoVar -> Coercion
-                            -> (LiftingContext, TyCoVar, Coercion)
-substForAllCoBndrUsingLC sym sco (LC subst lc_env) tv co
+                         -> (Type -> Type)
+                         -> (Coercion -> Coercion)
+                         -> LiftingContext -> TyCoVar -> Coercion
+                         -> (LiftingContext, TyCoVar, Coercion)
+substForAllCoBndrUsingLC sym sty sco (LC subst lc_env) tv co
   = (LC subst' lc_env, tv', co')
   where
-    (subst', tv', co') = substForAllCoBndrUsing sym sco subst tv co
+    (subst', tv', co') = substForAllCoBndrUsing Co sym sty sco subst tv co
+
+-- | Like 'substForAllDCoBndr', but works on a lifting context
+substForAllDCoBndrUsingLC :: Bool
+                         -> (Type -> Type)
+                         -> (DCoercion -> DCoercion)
+                         -> LiftingContext -> TyCoVar -> DCoercion
+                         -> (LiftingContext, TyCoVar, DCoercion)
+substForAllDCoBndrUsingLC sym sty sco (LC subst lc_env) tv co
+  = (LC subst' lc_env, tv', co')
+  where
+    (subst', tv', co') = substForAllCoBndrUsing DCo sym sty sco subst tv co
 
 -- | The \"lifting\" operation which substitutes coercions for type
 --   variables in a type to produce a coercion.

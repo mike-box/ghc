@@ -352,7 +352,6 @@ coreDumpFlag CoreTidy                 = Just Opt_D_dump_simpl
 coreDumpFlag CorePrep                 = Just Opt_D_dump_prep
 coreDumpFlag CoreOccurAnal            = Just Opt_D_dump_occur_anal
 
-coreDumpFlag CoreDoOptCoercion        = Nothing
 coreDumpFlag CoreAddCallerCcs         = Nothing
 coreDumpFlag CoreAddLateCcs           = Nothing
 coreDumpFlag CoreDoPrintCore          = Nothing
@@ -834,7 +833,7 @@ lintCastExpr expr expr_ty co
        ; let (Pair from_ty to_ty, role) = coercionKindRole co'
        ; checkValueType to_ty $
          text "target of cast" <+> quotes (ppr co')
-       ; lintRole co' Representational role
+       ; lintRole (text "lintCastExpr") co' Representational role
        ; ensureEqTys from_ty expr_ty (mkCastErr expr co' from_ty expr_ty)
        ; return to_ty }
 
@@ -1963,7 +1962,7 @@ lintStarCoercion g
        ; let Pair t1 t2 = coercionKind g'
        ; checkValueType t1 (text "the kind of the left type in" <+> ppr g)
        ; checkValueType t2 (text "the kind of the right type in" <+> ppr g)
-       ; lintRole g Nominal (coercionRole g)
+       ; lintRole (text "lintStarCoercion") g Nominal (coercionRole g)
        ; return g' }
 
 lintCoercion :: InCoercion -> LintM LintedCoercion
@@ -2007,7 +2006,7 @@ lintCoercion (GRefl r ty (MCo co))
        ; ensureEqTys tk tl $
          hang (text "GRefl coercion kind mis-match:" <+> ppr co)
             2 (vcat [ppr ty', ppr tk, ppr tl])
-       ; lintRole co' Nominal (coercionRole co')
+       ; lintRole (text "lintCoercion GRefl MCo") co' Nominal (coercionRole co')
        ; return (GRefl r ty' (MCo co')) }
 
 lintCoercion co@(TyConAppCo r tc cos)
@@ -2025,7 +2024,7 @@ lintCoercion co@(TyConAppCo r tc cos)
        ; let (co_kinds, co_roles) = unzip (map coercionKindRole cos')
        ; lint_co_app co (tyConKind tc) (map pFst co_kinds)
        ; lint_co_app co (tyConKind tc) (map pSnd co_kinds)
-       ; zipWithM_ (lintRole co) (tyConRolesX r tc) co_roles
+       ; zipWithM_ (lintRole (text "lintCoercion TyConAppCo") co) (tyConRolesX r tc) co_roles
        ; return (TyConAppCo r tc cos') }
 
 lintCoercion co@(AppCo co1 co2)
@@ -2045,7 +2044,7 @@ lintCoercion co@(AppCo co1 co2)
          then lintL (r2 == Phantom || r2 == Nominal)
                      (text "Second argument in AppCo cannot be R:" $$
                       ppr co)
-         else lintRole co Nominal r2
+         else lintRole (text "lintCoercion AppCo") co Nominal r2
 
        ; return (AppCo co1' co2') }
 
@@ -2094,14 +2093,14 @@ lintCoercion co@(FunCo r cow co1 co2)
              Pair ltw rtw = coercionKind cow
        ; lintArrow (text "coercion" <+> quotes (ppr co)) lt1 lt2 ltw
        ; lintArrow (text "coercion" <+> quotes (ppr co)) rt1 rt2 rtw
-       ; lintRole co1 r (coercionRole co1)
-       ; lintRole co2 r (coercionRole co2)
+       ; lintRole (text "lintCoercion FunCo arg") co1 r (coercionRole co1)
+       ; lintRole (text "lintCoercion FunCo res") co2 r (coercionRole co2)
        ; ensureEqTys (typeKind ltw) multiplicityTy (text "coercion" <> quotes (ppr co))
        ; ensureEqTys (typeKind rtw) multiplicityTy (text "coercion" <> quotes (ppr co))
        ; let expected_mult_role = case r of
                                     Phantom -> Phantom
                                     _ -> Nominal
-       ; lintRole cow expected_mult_role (coercionRole cow)
+       ; lintRole (text "lintCoercion FunCo mult") cow expected_mult_role (coercionRole cow)
        ; return (FunCo r cow' co1' co2') }
 
 lintCoercion (HydrateDCo r ty dco) =
@@ -2175,7 +2174,7 @@ lintCoercion co@(UnivCo prov r ty1 ty2)
 
      lint_prov k1 _ k2 _ (PhantomProv kco)
        = do { kco' <- lintStarCoercion kco
-            ; lintRole co Phantom r
+            ; lintRole (text "lintCoercion UnivCo PhantomProv") co Phantom r
             ; check_kinds kco' k1 k2
             ; return (PhantomProv kco') }
 
@@ -2207,7 +2206,7 @@ lintCoercion co@(TransCo co1 co2)
        ; ensureEqTys ty1b ty2a
                (hang (text "Trans coercion mis-match:" <+> ppr co)
                    2 (vcat [ppr (coercionKind co1'), ppr (coercionKind co2')]))
-       ; lintRole co (coercionRole co1) (coercionRole co2)
+       ; lintRole (text "lintCoercion TransCo") co (coercionRole co1) (coercionRole co2)
        ; return (TransCo co1' co2') }
 
 lintCoercion the_co@(NthCo r0 n co)
@@ -2219,7 +2218,7 @@ lintCoercion the_co@(NthCo r0 n co)
              | n == 0
              ,  (isForAllTy_ty s && isForAllTy_ty t)
              || (isForAllTy_co s && isForAllTy_co t)
-             -> do { lintRole the_co Nominal r0
+             -> do { lintRole (text "lintCoercion NthCo ForAll") the_co Nominal r0
                    ; return (NthCo r0 n co') }
 
          ; _ -> case (splitTyConApp_maybe s, splitTyConApp_maybe t) of
@@ -2229,7 +2228,7 @@ lintCoercion the_co@(NthCo r0 n co)
                  -- see Note [NthCo and newtypes] in GHC.Core.TyCo.Rep
              , tys_s `equalLength` tys_t
              , tys_s `lengthExceeds` n
-             -> do { lintRole the_co tr r0
+             -> do { lintRole (text "lintCoercion NthCo TyCon") the_co tr r0
                    ; return (NthCo r0 n co') }
                 where
                   tr = nthRole r tc_s n
@@ -2241,7 +2240,7 @@ lintCoercion the_co@(LRCo lr co)
   = do { co' <- lintCoercion co
        ; let Pair s t = coercionKind co'
              r        = coercionRole co'
-       ; lintRole co Nominal r
+       ; lintRole (text "lintCoercion LRCo") co Nominal r
        ; case (splitAppTy_maybe s, splitAppTy_maybe t) of
            (Just _, Just _) -> return (LRCo lr co')
            _ -> failWithL (hang (text "Bad LRCo:")
@@ -2253,7 +2252,7 @@ lintCoercion (InstCo co arg)
        ; let Pair t1 t2 = coercionKind co'
              Pair s1 s2 = coercionKind arg'
 
-       ; lintRole arg Nominal (coercionRole arg')
+       ; lintRole (text "lintCoercion InstCo") arg Nominal (coercionRole arg')
 
       ; case (splitForAllTyVar_maybe t1, splitForAllTyVar_maybe t2) of
          -- forall over tvar
@@ -2304,7 +2303,7 @@ lintCoercion co@(AxiomInstCo con ind cos)
       = do { let Pair s' t' = coercionKind arg'
                  sk' = typeKind s'
                  tk' = typeKind t'
-           ; lintRole arg' role (coercionRole arg')
+           ; lintRole (text "lintCoercion AxiomInstCo") arg' role (coercionRole arg')
            ; let ktv_kind_l = substTy subst_l (tyVarKind ktv)
                  ktv_kind_r = substTy subst_r (tyVarKind ktv)
            ; unless (sk' `eqType` ktv_kind_l)
@@ -2320,7 +2319,7 @@ lintCoercion (KindCo co)
 
 lintCoercion (SubCo co')
   = do { co' <- lintCoercion co'
-       ; lintRole co' Nominal (coercionRole co')
+       ; lintRole (text "lintCoercion SubCo") co' Nominal (coercionRole co')
        ; return (SubCo co') }
 
 lintCoercion this@(AxiomRuleCo ax cos)
@@ -2483,9 +2482,8 @@ lintDCoercion r l_ty dco = case dco of
     | otherwise
     -> failWithL (text "Bad AxiomInstDCo: " <+> ppr r <+> ppr l_ty <+> ppr dco)
 
-
   StepsDCo 0
-    -> return (Refl l_ty)
+    -> return (mkReflCo r l_ty)
   StepsDCo n
     | Just (tc, tys) <- splitTyConApp_maybe l_ty
     , Just ax <- isClosedSynFamilyTyConWithAxiom_maybe tc
@@ -2512,7 +2510,12 @@ lintDCoercion r l_ty dco = case dco of
           ; lintCoercion $ co `mkTransCo` co' }
 
     | otherwise
-    -> failWithL (text "Bad StepsDCo: " <+> ppr r <+> ppr l_ty <+> ppr dco)
+    -> failWithL $ vcat
+        [text "lintDCoercion: Bad StepsDCo"
+        ,text "role:" <+> ppr r
+        ,text "l_ty:" <+> ppr l_ty
+        ,text "dco:"  <+> ppr dco
+        ]
 
   UnivDCo prov r_ty ->
     do { r_ty' <- lintType r_ty
@@ -2528,7 +2531,7 @@ lintDCoercion r l_ty dco = case dco of
                 -> LintM (UnivCoProvenance Coercion)
       lint_prov r _ k1 _ _ (PhantomProv kco)
         = do { kco' <- lintStarDCoercion r k1 kco
-             ; lintRole dco Phantom r
+             ; lintRole (text "lintDCoercion UnivCo PhantomProv") dco Phantom r
              ; return (PhantomProv kco') }
 
       lint_prov r ty1 k1 ty2 _ (ProofIrrelProv kco)
@@ -2552,11 +2555,11 @@ lintDCoercion r l_ty dco = case dco of
              co_r    = coercionRole co'
 
        ; checkL (r == co_r) $
-           hang (text "DehydrateCo role mismatch:" <+> ppr co)
+           hang (text "lintDCoercion: DehydrateCo role mismatch:" <+> ppr co)
               2 (vcat [text "Expected role:" <+> ppr r
                       ,text "  Actual role:" <+> ppr co_r])
        ; ensureEqTys l_ty co_ty_l
-               (hang (text "DehydrateCo LHS mis-match:" <+> ppr co)
+               (hang (text "lintDCoercion: DehydrateCo LHS mis-match:" <+> ppr co)
                    2 (vcat [text "Expected type:" <+> ppr l_ty
                            ,text "  Actual type:" <+> ppr co_ty_l]))
        ; return co' }
@@ -2565,7 +2568,7 @@ lintStarDCoercion :: Role -> LintedKind -> DCoercion -> LintM LintedCoercion
 lintStarDCoercion r l_ki g
   = do { g' <- lintDCoercion Nominal l_ki g
        ; checkValueType l_ki (text "the kind of the left type in" <+> ppr g)
-       ; lintRole g Nominal r
+       ; lintRole (text "lintStarDCoercion") g Nominal r
        ; return g' }
 
 {-
@@ -3156,13 +3159,15 @@ ensureSubMult actual_usage described_usage err_msg = do
                          Nothing -> m
 
 lintRole :: Outputable thing
-          => thing     -- where the role appeared
+          => SDoc
+          -> thing     -- where the role appeared
           -> Role      -- expected
           -> Role      -- actual
           -> LintM ()
-lintRole co r1 r2
+lintRole what co r1 r2
   = lintL (r1 == r2)
-          (text "Role incompatibility: expected" <+> ppr r1 <> comma <+>
+          (text "Role incompatibility in" <+> what $$
+           text ": expected" <+> ppr r1 <> comma <+>
            text "got" <+> ppr r2 $$
            text "in" <+> ppr co)
 

@@ -2315,14 +2315,16 @@ breakTyVarCycle_maybe ev cte_result (TyVarLHS lhs_tv) rhs
 
       | otherwise
       = do { arg_redns <- unzipRedns <$> mapM go tys
-           ; tys <- mapM zonkTcType tys -- SLD TODO (LC): avoid zonking here
-                                        -- (it's due to mkTyConAppRedn_MightBeSynonym using mkHydrateDCo)
+           ; tys <- mapM zonkTcType tys
+             -- This zonk is necessary because mkTyConAppRedn_MightBeSynonym uses mkHydrateDCo.
+             -- See Note [The Hydration invariant] in GHC.Core.Coercion.
            ; return $ mkTyConAppRedn_MightBeSynonym Nominal tc tys arg_redns }
 
     go (Rep.AppTy ty1 ty2)
       = mkAppRedn <$> go ty1 <*> go ty2
     go (Rep.FunTy vis w arg res)
-      = mkFunRedn vis <$> go w <*> go arg <*> go res
+      = mkFunRedn vis <$> go w <*> pure mkReflDCo <*> pure mkReflDCo <*> go arg <*> go res
+        -- SLD TODO: these ReflDCos are only OK if this function is homogeneous. Is it?
     go (Rep.CastTy ty cast_co)
       = mkCastRedn1 cast_co <$> go ty
     go ty@(Rep.TyVarTy {})    = skip ty
