@@ -80,7 +80,7 @@ module GHC.Core.TyCo.Rep (
 
 import GHC.Prelude
 
-import {-# SOURCE #-} GHC.Core.TyCo.Ppr ( pprType, pprCo, pprDCo, pprTyLit )
+import {-# SOURCE #-} GHC.Core.TyCo.Ppr ( pprType, pprCo, pprParendCo, pprDCo, pprTyLit )
 
    -- Transitively pulls in a LOT of stuff, better to break the loop
 
@@ -1208,7 +1208,7 @@ type MCoercionN = MCoercion
 
 instance Outputable MCoercion where
   ppr MRefl    = text "MRefl"
-  ppr (MCo co) = text "MCo" <+> ppr co
+  ppr (MCo co) = text "MCo" <+> pprParendCo co
 
 {- Note [Refl invariant]
 ~~~~~~~~~~~~~~~~~~~~~~~~

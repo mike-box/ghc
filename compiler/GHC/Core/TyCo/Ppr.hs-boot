@@ -7,6 +7,7 @@ import GHC.Utils.Outputable ( SDoc )
 pprType :: Type -> SDoc
 pprKind :: Kind -> SDoc
 pprCo :: Coercion -> SDoc
+pprParendCo :: Coercion -> SDoc
 pprDCo :: DCoercion -> SDoc
 pprTyLit :: TyLit -> SDoc
 pprTyVar :: TyVar -> SDoc

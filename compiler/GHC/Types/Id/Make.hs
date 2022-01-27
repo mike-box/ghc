@@ -1023,7 +1023,8 @@ dataConSrcToImplBang bang_opts fam_envs arg_ty
       srcUnpack -> isSrcUnpacked srcUnpack
   = case mb_co of
       Nothing   -> HsUnpack Nothing
-      Just redn -> HsUnpack (Just $ reductionCoercion Representational (scaledThing arg_ty) redn)
+      Just redn -> HsUnpack $ Just $
+                   mkHydrateReductionDCoercion Representational redn
 
   | otherwise -- Record the strict-but-no-unpack decision
   = HsStrict

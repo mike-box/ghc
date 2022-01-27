@@ -917,42 +917,24 @@ mkAppDCos :: DCoercion
          -> DCoercion
 mkAppDCos co1 cos = foldl' mkAppDCo co1 cos
 
--- | Compose two directed coercions, doing some
--- simplifications of the form:
+-- | Transitivity for directed coercions.
 --
---  - co ; Refl --> co
---  - Refl ; co --> co
---  - StepsDCo n ; StepsDCo m --> StepsDCo (n + m)
---
--- Avoids recursing into the LHS coercion.
+-- Does some basic simplifications, i.e. either coercion is 'ReflDCo'
+-- or both are 'StepsDCo', but nothing more elaborate.
 mkTransDCo :: DCoercion -> DCoercion -> DCoercion
+  -- NB: if you change this function in an attempt to gain more simplification,
+  -- e.g. simplifying @StepsDCo n `mkTransCo` ( StepsDCo m ; dco )@ to
+  -- @StepsDCo (n+m) ; dco@, check it is not causing significant regressions
+  -- in the rewriter, e.g. T13386.
 mkTransDCo dco1 dco2
+  | isReflDCo dco1
+  = dco2
   | isReflDCo dco2
   = dco1
-  | otherwise
-  = mk_trans_dco dco1 dco2
-
-  where
-
-    -- invariant: RHS is not Refl
-    mk_trans_dco (dco1a `TransDCo` dco1b) dco2
-      = dco1a `TransDCo` (mk_trans_dco dco1b dco2)
-    mk_trans_dco dco1 (dco2a `TransDCo` dco2b)
-      | isReflDCo dco1
-      = dco2a `mkTransDCo` dco2b
-      | otherwise
-      = mk_trans_dco dco1 dco2a `mkTransDCo` dco2b
-    mk_trans_dco dco1 dco2
-      | isReflDCo dco1
-      = dco2
-      | otherwise
-      = cancel_steps dco1 dco2
-
-    -- invariant: neither argument is Refl or TransDCo
-    cancel_steps (StepsDCo m) (StepsDCo n)
-      = StepsDCo (m + n)
-    cancel_steps dco1 dco2
-      = TransDCo dco1 dco2
+mkTransDCo (StepsDCo n) (StepsDCo m)
+  = StepsDCo (n+m)
+mkTransDCo dco1 dco2
+  = TransDCo dco1 dco2
 
 -- | Make a Coercion from a tycovar, a kind coercion, and a body coercion.
 -- The kind of the tycovar should be the left-hand kind of the kind coercion.
