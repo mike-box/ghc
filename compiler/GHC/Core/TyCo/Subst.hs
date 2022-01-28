@@ -875,7 +875,7 @@ subst_co_dco subst = (go, go_dco)
     go (FunCo r w co1 co2)   = ((mkFunCo r $! go w) $! go co1) $! go co2
     go (CoVarCo cv)          = substCoVar subst cv
     go (AxiomInstCo con ind cos) = mkAxiomInstCo con ind $! map go cos
-    go (HydrateDCo r ty dco) = ((mkHydrateDCo $! r) $! go_ty ty) $! go_dco dco
+    go (HydrateDCo r ty dco mrty) = (((mkHydrateDCo $! r) $! go_ty ty) $! go_dco dco ) $! fmap go_ty mrty
     go (UnivCo p r t1 t2)    = (((mkUnivCo $! go_prov go p) $! r) $!
                                 (go_ty t1)) $! (go_ty t2)
     go (SymCo co)            = mkSymCo $! (go co)
@@ -966,7 +966,7 @@ substForAllCoTyVarBndrUsing co_or_dco sym sty sco (TCvSubst in_scope tenv cenv) 
   where
     new_env | no_change && not sym = delVarEnv tenv old_var
             | sym       = extendVarEnv tenv old_var $
-                          TyVarTy new_var `mk_cast` new_kind_co
+                          mk_cast (TyVarTy new_var) new_kind_co
             | otherwise = extendVarEnv tenv old_var (TyVarTy new_var)
 
     no_kind_change = case co_or_dco of
@@ -974,7 +974,7 @@ substForAllCoTyVarBndrUsing co_or_dco sym sty sco (TCvSubst in_scope tenv cenv) 
       DCo -> noFreeVarsOfDCo old_kind_co
     mk_cast = case co_or_dco of
       Co  -> CastTy
-      DCo -> \ ty dco -> CastTy ty (mkHydrateDCo Nominal new_ki1 dco)
+      DCo -> \ ty dco -> CastTy ty (mkHydrateDCo Nominal new_ki1 dco Nothing)
 
     no_change = no_kind_change && (new_var == old_var)
 

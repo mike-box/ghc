@@ -302,7 +302,7 @@ toIfaceCoercionDCoercion fr = (go, go_dco)
     go (SubCo co)           = IfaceSubCo (go co)
     go (AxiomRuleCo co cs)  = IfaceAxiomRuleCo (coaxrName co) (map go cs)
     go (AxiomInstCo c i cs) = IfaceAxiomInstCo (coAxiomName c) i (map go cs)
-    go (HydrateDCo r t dco) = IfaceHydrateDCo r (toIfaceTypeX fr t) (go_dco dco)
+    go (HydrateDCo r t dco t')= IfaceHydrateDCo r (toIfaceTypeX fr t) (go_dco dco) (toIfaceTypeX fr <$> t')
     go (UnivCo p r t1 t2)   = IfaceUnivCo (go_prov go p) r
                                           (toIfaceTypeX fr t1)
                                           (toIfaceTypeX fr t2)

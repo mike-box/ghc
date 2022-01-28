@@ -91,7 +91,7 @@ import qualified GHC.Utils.Error as Err
 import GHC.Utils.Logger
 
 import Control.Monad
-import Data.Foldable      ( toList )
+import Data.Foldable      ( toList, for_ )
 import Data.List.NonEmpty ( NonEmpty(..), groupWith )
 import Data.List          ( partition )
 import Data.Maybe
@@ -2103,9 +2103,20 @@ lintCoercion co@(FunCo r cow co1 co2)
        ; lintRole (text "lintCoercion FunCo mult") cow expected_mult_role (coercionRole cow)
        ; return (FunCo r cow' co1' co2') }
 
-lintCoercion (HydrateDCo r ty dco) =
-  do { ty' <- lintType ty
-     ; lintDCoercion r ty' dco }
+lintCoercion (HydrateDCo r ty dco mrty) =
+  do { ty'   <- lintType ty
+     ; mrty' <- mapM lintType mrty
+     ; co    <- lintDCoercion r ty' dco
+     ; for_ mrty' $ \ rty' ->
+         let rty = coercionRKind co in
+         ensureEqTys rty' rty $
+           vcat [ text "Mismatch of cached RHS type in HydrateDCo"
+                , text "dco:" <+> ppr dco
+                , text "stored RHS:" <+> ppr rty'
+                , text "computed RHS:" <+> ppr rty
+                , text "LHS:" <+> ppr ty
+                , text "role:" <+> ppr r ]
+     ; return co }
 
 -- See Note [Bad unsafe coercion]
 lintCoercion co@(UnivCo prov r ty1 ty2)

@@ -1093,7 +1093,7 @@ lookupFamAppInert fam_tc tys
     lookup_inerts inert_funeqs
       | Just (EqualCtList (CEqCan { cc_ev = ctev, cc_rhs = rhs } :| _))
           <- findFunEq inert_funeqs fam_tc tys
-      = Just (mkReduction fam_app (mkDehydrateCo (ctEvCoercion ctev)) rhs -- SLD TODO: avoid dehydrating?
+      = Just (mkReduction fam_app (mkDehydrateCo (ctEvCoercion ctev)) rhs
              ,ctEvFlavourRole ctev)
       | otherwise = Nothing
 
@@ -2356,7 +2356,6 @@ breakTyVarCycle_maybe ev cte_result (TyVarLHS lhs_tv) rhs
            ; let new_ty = mkTyVarTy new_tv
            ; co <- emitNewWantedEq new_loc Nominal new_ty fun_app
            ; return $ mkReduction fun_app (mkDehydrateCo (mkSymCo co)) new_ty }
-               -- SLD TODO: mkDehydrateCo
 
       -- See Detail (7) of the Note
     new_loc = updateCtLocOrigin (ctEvLoc ev) CycleBreakerOrigin

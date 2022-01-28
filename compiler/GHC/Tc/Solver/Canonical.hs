@@ -1639,7 +1639,8 @@ can_eq_newtype_nc ev swapped ty1 ((gres, co1), ty1') ty2 ps_ty2
          -- module, don't warn about it being unused.
          -- See Note [Tracking unused binding and imports] in GHC.Tc.Utils.
 
-       ; let redn1 = mkReduction ty1 (mkDehydrateCo co1) ty1'  -- SLD TODO: eliminate dehydration
+       ; let redn1 = mkReduction ty1 (mkDehydrateCo co1) ty1'
+             -- TODO: eliminate dehydration
 
        ; new_ev <- rewriteEqEvidence ev swapped redn1 (mkReflRedn ps_ty2)
        ; can_eq_nc False new_ev ReprEq ty1' ty1' ty2 ps_ty2 }
@@ -3161,7 +3162,7 @@ rewriteEvidence old_ev (Reduction _old_pred dco new_pred)
 
 rewriteEvidence ev@(CtGiven { ctev_evar = old_evar, ctev_loc = loc }) (Reduction old_pred dco new_pred)
   = do { let
-          co = mkHydrateDCo (ctEvRole ev) old_pred dco
+          co = mkHydrateDCo (ctEvRole ev) old_pred dco (Just new_pred)
           -- NB: this call to mkHydrateDCo is OK, because of the invariant
           -- on the LHS type stored in a Reduction. See Note [The Reduction type]
           -- in GHC.Core.Reduction.
@@ -3178,7 +3179,7 @@ rewriteEvidence ev@(CtWanted { ctev_dest = dest
   = do { mb_new_ev <- newWanted_SI si loc new_pred
                -- The "_SI" variant ensures that we make a new Wanted
                -- with the same shadow-info as the existing one (#16735)
-       ; let co = mkHydrateDCo (ctEvRole ev) old_pred dco
+       ; let co = mkHydrateDCo (ctEvRole ev) old_pred dco (Just new_pred)
           -- NB: this call to mkHydrateDCo is OK, because of the invariant
           -- on the LHS type stored in a Reduction. See Note [The Reduction type]
           -- in GHC.Core.Reduction.

@@ -56,9 +56,8 @@ import GHC.Builtin.Types.Prim (tYPETyCon)
 -- | The 'RewriteM' monad is a wrapper around 'TcS' with a 'RewriteEnv'
 newtype RewriteM a
   = RewriteM { runRewriteM :: RewriteEnv -> TcS a }
---   deriving (Functor)
 
--- AMG TODO: Looks like using mkRewriteM here with the one-shot trick might save a bit on T9872d? Or could it be a profiling illusion?
+-- Use the one-shot trick for the functor instance of 'RewriteM'.
 instance Functor RewriteM where
   fmap f m = mkRewriteM $ \env -> fmap f $ runRewriteM m env
 
@@ -555,7 +554,7 @@ rewrite_one (FunTy { ft_af = vis, ft_mult = mult, ft_arg = ty1, ft_res = ty2 })
        ; role <- getRole
 
        ; let arg_rep_dco = reductionDCoercion arg_rep_redn
-             arg_rep_co = mkHydrateDCo role arg_rep arg_rep_dco
+             arg_rep_co = mkHydrateDCo role arg_rep arg_rep_dco (Just $ reductionReducedType arg_rep_redn)
                 -- :: arg_rep ~ arg_rep_xi
              arg_ki_co  = mkTyConAppCo Nominal tYPETyCon [arg_rep_co]
                 -- :: TYPE arg_rep ~ TYPE arg_rep_xi
@@ -563,7 +562,7 @@ rewrite_one (FunTy { ft_af = vis, ft_mult = mult, ft_arg = ty1, ft_res = ty2 })
                 -- :: ty1 ~> arg_xi |> arg_ki_co
 
              res_rep_dco = reductionDCoercion res_rep_redn
-             res_rep_co = mkHydrateDCo role res_rep res_rep_dco
+             res_rep_co = mkHydrateDCo role res_rep res_rep_dco (Just $ reductionReducedType res_rep_redn)
              res_ki_co  = mkTyConAppCo Nominal tYPETyCon [res_rep_co]
              casted_res_redn = mkCoherenceRightRedn res_redn res_ki_co
 

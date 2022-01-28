@@ -387,19 +387,26 @@ opt_co4 opts env sym rep r (AxiomInstCo con ind cos)
                                  cos)
       -- Note that the_co does *not* have sym pushed into it
 
-opt_co4 opts env@(LC _ lift_co_env) sym rep r (HydrateDCo _r lhs_ty dco)
+opt_co4 opts env@(LC _ lift_co_env) sym rep r (HydrateDCo _r lhs_ty dco mrhs_ty)
+  -- Reflexivity check.
+  | Just rhs_ty <- mrhs_ty
+  , lhs_ty `eqType` rhs_ty
+  = opt_co4 opts env sym rep r (mkReflCo r lhs_ty)
   -- If we don't need to do any substitution lifting,
   -- then we can just substitute.
   | isEmptyVarEnv lift_co_env
   = assert (r == _r) $
     wrapSym sym $
     wrapRole rep r $
-    substCo (lcTCvSubst env) (HydrateDCo r lhs_ty dco)
+    substCo (lcTCvSubst env) (HydrateDCo r lhs_ty dco mrhs_ty)
   | otherwise
   = assert (r == _r) $
     wrapSym sym $
-    mkHydrateDCo r (substTyUnchecked (lcSubstLeft env) lhs_ty) $
+    (\ d -> mkHydrateDCo r lhs' d mrhs') $
     opt_dco4_wrap "HydrateDCo" opts env rep r lhs_ty dco
+      where
+        lhs'  = substTyUnchecked (lcSubstLeft  env) lhs_ty
+        mrhs' = substTyUnchecked (lcSubstRight env) <$> mrhs_ty
 
 opt_co4 opts env sym rep r (UnivCo prov _r t1 t2)
   = assert (r == _r )
@@ -552,8 +559,7 @@ opt_co4 opts env sym _rep r (KindCo co)
   -- and substitution/optimization at the same time
 
 opt_co4 opts env sym _ _r (SubCo co)
-  -- SLD TODO
-  = -- assert (r == Representational) $
+  = assert (_r == Representational) $
     let res = opt_co4_wrap "SubCo" opts env sym True Nominal co
     in case coercionRole res of
          Nominal -> SubCo res
@@ -670,7 +676,7 @@ opt_univ co_or_dco opts env sym prov role oty1 oty2
   = let k1   = tyVarKind tv1
         k2   = tyVarKind tv2
         eta  = mk_univ Nominal k1 k2
-        tv1' = mk_cast (TyVarTy tv1) k1 eta
+        tv1' = mk_cast (TyVarTy tv1) k1 eta k2
           -- eta gets opt'ed soon, but not yet.
         ty2' = substTyWith [tv2] [tv1'] ty2
 
@@ -688,7 +694,7 @@ opt_univ co_or_dco opts env sym prov role oty1 oty2
         eta_d = downgradeRole r' Nominal $
                 case co_or_dco of
                   Co  -> eta
-                  DCo -> mkHydrateDCo Nominal k1 eta
+                  DCo -> mkHydrateDCo Nominal k1 eta (Just k2)
           -- eta gets opt'ed soon, but not yet.
         n_co  = (mkSymCo $ mkNthCo r' 2 eta_d) `mkTransCo`
                 (mkCoVarCo cv1) `mkTransCo`
@@ -708,10 +714,10 @@ opt_univ co_or_dco opts env sym prov role oty1 oty2
     mk_univ role a b
 
   where
-    mk_cast :: Type -> Type -> co_or_dco -> Type
+    mk_cast :: Type -> Type -> co_or_dco -> Type -> Type
     mk_cast = case co_or_dco of
-      Co  -> \ ty _ co  -> CastTy ty co
-      DCo -> \ ty l dco -> CastTy ty (mkHydrateDCo Nominal l dco)
+      Co  -> \ ty _ co  _ -> CastTy ty co
+      DCo -> \ ty l dco r -> CastTy ty (mkHydrateDCo Nominal l dco (Just r))
     mk_univ :: Role -> Type -> Type -> co_or_dco
     mk_univ = case co_or_dco of
       Co  -> mkUnivCo  prov'
@@ -818,7 +824,9 @@ opt_trans_rule opts is in_co1@(UnivCo p1 r1 tyl1 _tyr1)
       = Just $ PhantomProv $ opt_trans opts is kco1 kco2
     opt_trans_prov (ProofIrrelProv kco1) (ProofIrrelProv kco2)
       = Just $ ProofIrrelProv $ opt_trans opts is kco1 kco2
-    opt_trans_prov (PluginProv str1)     (PluginProv str2)     | str1 == str2 = Just p1
+    opt_trans_prov (PluginProv str1)     (PluginProv str2)
+      | str1 == str2
+      = Just p1
     opt_trans_prov _ _ = Nothing
 
 -- Push transitivity down through matching top-level constructors.
@@ -1038,7 +1046,7 @@ opt_phantom_dco opts env l_ty dco = opt_univ DCo opts env False (PhantomProv kco
   where
     r_ty = followDCo Phantom l_ty dco
     kco = mkUnivDCo (PluginProv "phantom kind co") (typeKind r_ty)
-  -- SLD: not sure what to do here, as we don't have KindDCo.
+  -- SLD TODO: not sure what to do here, as we don't have KindDCo.
   -- A naive attempt at removing this entirely causes issues in test "type_in_type_hole_fits".
 
 opt_dco4_wrap :: String -> OptCoercionOpts -> LiftingContext -> ReprFlag -> Role -> Type -> DCoercion -> NormalDCo
@@ -1154,6 +1162,10 @@ opt_dco4 opts env rep r ty dco = case dco of
     lifted_dco = mkDehydrateCo $ liftCoSubst r' env ty
     r'         = chooseRole rep r
 
+
+---------------------------------------------------------
+-- Transitivity for directed coercions.
+
 opt_trans_dco :: OptCoercionOpts -> InScopeSet -> NormalDCo -> NormalDCo -> NormalDCo
 opt_trans_dco opts is dco1 dco2
   | isReflDCo dco1 = dco2
@@ -1175,6 +1187,7 @@ opt_trans2_dco opts is (TransDCo dco1a dco1b) dco2
 
 opt_trans2_dco _ _ dco1 dco2
   = mkTransDCo dco1 dco2
+
 
 {-
 Note [Conflict checking with AxiomInstCo]

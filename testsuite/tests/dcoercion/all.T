@@ -11,13 +11,15 @@ test('DCo_TypeRep', normal, compile, [''])
 ## to compile in a timely manner.
 test('DCo_Read', compile_timeout_multiplier(0.1), compile, [''])
 
-## Check that transitive directed coercions are properly optimised
-## by mkTransDCo.
-test('DCo_TransOpt', normal, compile_and_run, ['-package ghc'])
+## The following tests that we optimise away certain transitive coercions.
+## However, this optimisation was too slow, so we comment this out for now.
+#test('DCo_TransOpt', normal, compile_and_run, ['-package ghc'])
 
 ## Performance tests.
 test ('T15703',
-      [ collect_compiler_stats('bytes allocated',2) ],
+      [ collect_compiler_stats('bytes allocated',2)
+      , extra_files(['T15703aux.hs'])
+      ],
       multimod_compile,
       ['T15703', '-v0 -O'])
 test ('T8095',
@@ -28,3 +30,9 @@ test ('T13386',
       [ collect_compiler_stats('bytes allocated',2) ],
       compile,
       ['-v0 -O0'])
+test ('DCo_Record',
+      [ collect_compiler_stats('bytes allocated',2)
+      , extra_files(['SuperRecord.hs'])
+      ],
+      multimod_compile,
+      ['DCo_Record', '-v0 -O'])

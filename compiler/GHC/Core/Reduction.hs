@@ -46,6 +46,8 @@ import GHC.Utils.Misc      ( HasDebugCallStack, equalLength )
 import GHC.Utils.Outputable
 import GHC.Utils.Panic     ( assertPpr, panic )
 
+import Data.List           ( zipWith4 )
+
 {-
 %************************************************************************
 %*                                                                      *
@@ -151,7 +153,7 @@ instance Outputable Reduction where
 -- Prefer using 'mkReduction' wherever possible to avoid doing these indirections.
 mkDehydrateCoercionRedn :: Coercion -> Reduction
 mkDehydrateCoercionRedn co =
-  Reduction (coercionLKind co) (mkDehydrateCo co) (coercionRKind co)  -- AMG TODO: get rid of this?
+  Reduction (coercionLKind co) (mkDehydrateCo co) (coercionRKind co)
 {-# INLINE mkDehydrateCoercionRedn #-}
 
 -- | Hydrate the 'DCoercion' stored inside a 'Reduction' into a full-fledged 'Coercion'.
@@ -159,7 +161,7 @@ mkDehydrateCoercionRedn co =
 -- We use the LHS type stored in the 'Reduction' to ensure we satisfy the Hydration invariant
 -- of Note [The Hydration invariant] in GHC.Core.Coercion.
 mkHydrateReductionDCoercion :: Role -> Reduction -> Coercion
-mkHydrateReductionDCoercion r (Reduction lty dco _) = mkHydrateDCo r lty dco
+mkHydrateReductionDCoercion r (Reduction lty dco rty) = mkHydrateDCo r lty dco (Just rty)
 {-# INLINE mkHydrateReductionDCoercion  #-}
 
 -- | Compose two reductions.
@@ -431,11 +433,13 @@ mkTyConAppRedn tc (Reductions tys1 cos tys2)
 {-# INLINE mkTyConAppRedn #-}
 
 -- | 'TyConAppCo' for 'Reduction's: combines 'mkTyConAppCo' and `mkTyConApp`.
--- AMG TODO: this is a bit of a hack. 'mkTyConAppCo' handles synomyms by
--- lifting, but generalising lifting to DCoercions seems hard. So for now we
--- just call 'liftCoSubst' from here, building appropriate Coercions.
 mkTyConAppRedn_MightBeSynonym :: Role -> TyCon -> Reductions -> Reduction
 mkTyConAppRedn_MightBeSynonym role tc redns@(Reductions tys1 dcos tys2)
+  -- 'mkTyConAppCo' handles synomyms by using substitution lifting.
+  -- We don't have that for directed coercions, so we use hydrate/dehydrate
+  -- so that we can call 'liftCoSubst'.
+  -- In the future, it might be desirable to implement substitution lifting
+  -- for directed coercions to avoid this (and a similar issue in simplifyArgsWorker).
   | Just (tv_co_prs, rhs_ty, leftover_cos) <- expandSynTyCon_maybe tc cos
   = mkReduction
       (mkTyConApp tc tys1)
@@ -443,7 +447,8 @@ mkTyConAppRedn_MightBeSynonym role tc redns@(Reductions tys1 dcos tys2)
       (mkTyConApp tc tys2)
   | otherwise = mkTyConAppRedn tc redns
   where
-    cos = zipWith3 mkHydrateDCo (tyConRolesX role tc) tys1 dcos
+    cos = zipWith4 hydrate (tyConRolesX role tc) tys1 dcos tys2
+    hydrate r l d t = mkHydrateDCo r l d (Just t)
 {-# INLINE mkTyConAppRedn_MightBeSynonym #-}
 
 -- | Reduce the arguments of a 'Class' 'TyCon'.
@@ -732,8 +737,6 @@ demons to ourselves here instead of exposing them to callers. This decision is
 easily reversed if there is ever any performance trouble due to the call of
 coercionKind.)
 
-AMG TODO: update this note!
-
 So we now call
 
   decomposePiCos co1
@@ -908,10 +911,13 @@ simplifyArgsWorker orig_ki_binders orig_inner_ki orig_fvs
                       = mkCoherenceRightRedn arg_redn kind_co
          -- now, extend the lifting context with the new binding
              !new_lc | Just tv <- tyCoBinderVar_maybe binder
-                     = extendLiftingContextAndInScope lc tv (mkHydrateDCo role arg_ty casted_co)
-                     -- NB: this is the crucial places where we need the hydration invariant,
+                     = extendLiftingContextAndInScope lc tv (mkHydrateDCo role arg_ty casted_co (Just casted_xi))
+                     -- NB: this is the crucial place where we need the hydration invariant.
                      -- See Note [The Reduction type], as well as
                      -- Note [The Hydration invariant] in GHC.Core.Coercion.
+                     -- This could be avoided if we had substitution lifting for directed coercions.
+                     -- See also mkTyConAppRedn_MightBeSynonym, which is the other place where
+                     -- we need this.
                      | otherwise
                      = lc
              !(ArgsReductions (Reductions arg_tys cos xis) final_kind_co)

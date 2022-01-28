@@ -1410,7 +1410,7 @@ tcIfaceCo = go
                                         ForAllCo tv' k' <$> go c }
     go (IfaceCoVarCo n)          = CoVarCo <$> go_var n
     go (IfaceAxiomInstCo n i cs) = AxiomInstCo <$> tcIfaceCoAxiom n <*> pure i <*> mapM go cs
-    go (IfaceHydrateDCo r t1 dco)= HydrateDCo r <$> tcIfaceType t1 <*> tcIfaceDCo dco
+    go (IfaceHydrateDCo r t1 dco mt2)= HydrateDCo r <$> tcIfaceType t1 <*> tcIfaceDCo dco <*> traverse tcIfaceType mt2
     go (IfaceUnivCo p r t1 t2)   = UnivCo <$> tcIfaceUnivCoProv go p <*> pure r
                                           <*> tcIfaceType t1 <*> tcIfaceType t2
     go (IfaceSymCo c)            = SymCo    <$> go c
@@ -1440,7 +1440,7 @@ tcIfaceDCo = go
 
     go IfaceReflDCo                = pure ReflDCo
     go (IfaceGReflRightDCo mco)    = GReflRightDCo <$> go_mco mco
-    go (IfaceGReflLeftDCo  mco)    = GReflLeftDCo <$>  go_mco mco
+    go (IfaceGReflLeftDCo  mco)    = GReflLeftDCo <$> go_mco mco
     go (IfaceTyConAppDCo cs)       = TyConAppDCo <$> mapM go cs
     go (IfaceAppDCo c1 c2)         = AppDCo <$> go c1 <*> go c2
     go (IfaceForAllDCo tv k c)     = do { k' <- tcIfaceDCo k

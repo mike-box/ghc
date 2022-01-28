@@ -386,7 +386,7 @@ orphNamesOfCo (ForAllCo _ kind_co co)
 orphNamesOfCo (FunCo _ co_mult co1 co2) = orphNamesOfCo co_mult `unionNameSet` orphNamesOfCo co1 `unionNameSet` orphNamesOfCo co2
 orphNamesOfCo (CoVarCo _)           = emptyNameSet
 orphNamesOfCo (AxiomInstCo con _ cos) = orphNamesOfCoCon con `unionNameSet` orphNamesOfCos cos
-orphNamesOfCo (HydrateDCo _ t1 dco) = orphNamesOfType t1 `unionNameSet` orphNamesOfDCo dco
+orphNamesOfCo (HydrateDCo _ t1 dco _) = orphNamesOfType t1 `unionNameSet` orphNamesOfDCo dco
 orphNamesOfCo (UnivCo p _ t1 t2)    = orphNamesOfProv orphNamesOfCo p `unionNameSet` orphNamesOfType t1 `unionNameSet` orphNamesOfType t2
 orphNamesOfCo (SymCo co)            = orphNamesOfCo co
 orphNamesOfCo (TransCo co1 co2)     = orphNamesOfCo co1 `unionNameSet` orphNamesOfCo co2

@@ -2552,12 +2552,10 @@ isEmptyTy ty
 -- coercions via 'topNormaliseType_maybe'. Hence the \"norm\" prefix.
 normSplitTyConApp_maybe :: FamInstEnvs -> Type -> Maybe (TyCon, [Type], Coercion)
 normSplitTyConApp_maybe fam_envs ty
-  | let Reduction _ co ty1 = topNormaliseType_maybe fam_envs ty
-                             `orElse` (mkReflRedn ty)
+  | let Reduction ty' co ty1 = topNormaliseType_maybe fam_envs ty
+                               `orElse` (mkReflRedn ty)
   , Just (tc, tc_args) <- splitTyConApp_maybe ty1
-  = Just (tc, tc_args, mkHydrateDCo Representational ty co)
-  -- SLD TODO: this function is only called after typechecking,
-  -- so we don't need to worry about 'ty' being insufficiently zonked (I think).
+  = Just (tc, tc_args, mkHydrateDCo Representational ty' co (Just ty1))
 normSplitTyConApp_maybe _ _ = Nothing
 
 {-

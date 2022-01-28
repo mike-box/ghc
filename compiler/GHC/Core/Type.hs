@@ -617,8 +617,8 @@ expandTypeSynonyms ty
       = substCoVar subst cv
     go_co subst (AxiomInstCo ax ind args)
       = mkAxiomInstCo ax ind (map (go_co subst) args)
-    go_co subst (HydrateDCo r t1 dco)
-      = mkHydrateDCo r (go subst t1) (go_dco subst dco)
+    go_co subst (HydrateDCo r t1 dco mt2)
+      = mkHydrateDCo r (go subst t1) (go_dco subst dco) (fmap (go subst) mt2)
     go_co subst (UnivCo p r t1 t2)
       = mkUnivCo (go_prov (go_co subst) p) r (go subst t1) (go subst t2)
     go_co subst (SymCo co)
@@ -993,7 +993,7 @@ mapTyCoX (TyCoMapper { tcm_tyvar = tyvar
     go_co env (FunCo r cw c1 c2)   = mkFunCo r <$> go_co env cw <*> go_co env c1 <*> go_co env c2
     go_co env (CoVarCo cv)        = covar env cv
     go_co env (HoleCo hole)       = cohole env hole
-    go_co env (HydrateDCo r t1 dco) = mkHydrateDCo r <$> go_ty env t1 <*> go_dco env dco
+    go_co env (HydrateDCo r t1 dco mt2) = mkHydrateDCo r <$> go_ty env t1 <*> go_dco env dco <*> traverse (go_ty env) mt2
     go_co env (UnivCo p r t1 t2)  = mkUnivCo <$> go_prov (go_co env) p <*> pure r
                                     <*> go_ty env t1 <*> go_ty env t2
     go_co env (SymCo co)          = mkSymCo <$> go_co env co
@@ -3398,9 +3398,10 @@ occCheckExpand vs_to_avoid ty
 
     go_co cxt (AxiomInstCo ax ind args) = do { args' <- mapM (go_co cxt) args
                                              ; return (mkAxiomInstCo ax ind args') }
-    go_co ctx (HydrateDCo r ty1 dco)    = do { ty1' <- go ctx ty1
-                                             ; dco' <- go_dco ctx dco
-                                             ; return (mkHydrateDCo r ty1' dco') }
+    go_co ctx (HydrateDCo r ty1 dco mty2)= do { ty1' <- go ctx ty1
+                                              ; dco' <- go_dco ctx dco
+                                              ; mty2' <- fmap (go ctx) mty2
+                                              ; return (mkHydrateDCo r ty1' dco' mty2') }
     go_co cxt (UnivCo p r ty1 ty2)      = do { p' <- go_prov (go_co cxt) p
                                              ; ty1' <- go cxt ty1
                                              ; ty2' <- go cxt ty2
@@ -3496,7 +3497,7 @@ tyConsOfType ty
      go_co (ForAllCo _ kind_co co) = go_co kind_co `unionUniqSets` go_co co
      go_co (FunCo _ co_mult co1 co2) = go_co co_mult `unionUniqSets` go_co co1 `unionUniqSets` go_co co2
      go_co (AxiomInstCo ax _ args) = go_ax ax `unionUniqSets` go_cos args
-     go_co (HydrateDCo _ t1 dco)   = go t1 `unionUniqSets` go_dco dco
+     go_co (HydrateDCo _ t1 dco _) = go t1 `unionUniqSets` go_dco dco
      go_co (UnivCo p _ t1 t2)      = go_prov go_co p `unionUniqSets` go t1 `unionUniqSets` go t2
      go_co (CoVarCo {})            = emptyUniqSet
      go_co (HoleCo {})             = emptyUniqSet

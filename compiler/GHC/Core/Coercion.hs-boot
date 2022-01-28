@@ -42,7 +42,7 @@ mkReflDCo :: DCoercion
 mkGReflRightDCo :: MCoercionN -> DCoercion
 mkGReflLeftDCo :: MCoercionN -> DCoercion
 mkDehydrateCo :: Coercion -> DCoercion
-mkHydrateDCo :: Role -> Type -> DCoercion -> Coercion
+mkHydrateDCo :: Role -> Type -> DCoercion -> Maybe Type -> Coercion
 mkCoVarDCo :: CoVar -> DCoercion
 mkUnivDCo :: UnivCoProvenance DCoercion -> Type -> DCoercion
 followDCo :: Role -> Type -> DCoercion -> Type

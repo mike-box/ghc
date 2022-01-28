@@ -1030,21 +1030,39 @@ in Note [The Purely Kinded Type Invariant (PKTI)] in GHC.Tc.Gen.HsType:
     Whenever we encounter a coercion of the form `HydrateDCo r ty dco`,
     it is legal to call `fullyHydrateDCo r ty dco` without zonking `ty`
     (i.e. that function will not crash).
+
+In particular, it should be possible to compute the RHS type, i.e. to call
+`followDCo r ty dco`.
+
+In most places in the compiler, we deal with hydrated coercions after typechecking
+so we don't have to worry about a type being sufficiently zonked or not.
+The two main places we do need to worry are:
+
+  - GHC.Core.Reduction.mkTyConAppRedn_MightBeSynonym
+  - GHC.Core.Reduction.simplifyArgsWorker
+
+Those two functions use substitution lifting, which works with undirected coercions.
+This requires hydration, and thus satisfying the Hydration invariant. We achieve this
+by storing an updated LHS type throughout the rewriter, ensuring that the LHS type
+is always of the expected form for the invariant to be satisfied.
+See Note [The Reduction type] in GHC.Core.Reduction.
 -}
 
 -- | Turn a 'DCoercion' into a full 'Coercion' by specifying
 -- a 'Role' and the LHS (input) 'Type' of the coercion.
+--
+-- Optionally: specify a cached RHS type, to avoid having to recompute it later.
 --
 -- To compute the fully expanded 'Coercion', recursively
 -- removing inner directed coercions, use 'fullyHydrateDCo'.
 --
 -- NB: the LHS type must uphold the invariant of Note [The Hydration invariant]:
 -- it must be sufficiently zonked for the structure of the directed coercion to be visible.
-mkHydrateDCo :: Role -> Type -> DCoercion -> Coercion
-mkHydrateDCo r ty ReflDCo          = mkReflCo r ty
-mkHydrateDCo _ _  (CoVarDCo cv)    = CoVarCo cv
-mkHydrateDCo r _  (DehydrateCo co) = fromMaybe co (downgradeRole_maybe r (coercionRole co) co)
-mkHydrateDCo r ty dco              = HydrateDCo r ty dco
+mkHydrateDCo :: Role -> Type -> DCoercion -> Maybe Type -> Coercion
+mkHydrateDCo r ty ReflDCo          _    = mkReflCo r ty
+mkHydrateDCo _ _  (CoVarDCo cv)    _    = CoVarCo cv
+mkHydrateDCo r _  (DehydrateCo co) _    = fromMaybe co (downgradeRole_maybe r (coercionRole co) co)
+mkHydrateDCo r ty dco              mrty = HydrateDCo r ty dco mrty
 
 fullyHydrateDCo :: Role -> Type -> DCoercion -> Coercion
 fullyHydrateDCo r ty dco = fst $ expandDCo r ty dco
@@ -1065,9 +1083,8 @@ expandDCo r l_ty (GReflRightDCo mco)
   = (co, coercionRKind co)
 
 expandDCo r l_ty (GReflLeftDCo mco)
-  | let sym_mco = mkSymMCo mco
-        co = mkGReflCo r l_ty sym_mco
-  = (co, coercionRKind co)
+  | let co = mkGReflCo r l_ty mco
+  = (mkSymCo co, coercionLKind co)
 
 expandDCo r l_ty (TyConAppDCo dcos)
   | Just (tc, l_tys) <- splitTyConApp_maybe l_ty
@@ -1092,7 +1109,6 @@ expandDCo r l_ty co@(ForAllDCo tcv kco body_dco)
   | not (isTyCoVar tcv)
   = pprPanic "expandDCo" (text "Non tyco binder in ForAllDCo:" <+> ppr co)
   | otherwise
-  -- SLD TODO: is this sensible?
   = case coreFullView l_ty of
       ForAllTy (Bndr tv af) body_ty
         | (body_co, rhs_ty) <- expandDCo r body_ty body_dco
@@ -1219,13 +1235,12 @@ expandDCos rs tys dcos =
   -- Not zipWith3Equal because the TyCon might not be fully applied
   zipWith3 expandDCo rs tys dcos
 
--- AMG TODO: more cases here?
 mkDehydrateCo :: Coercion -> DCoercion
-mkDehydrateCo co | isReflCo co     = ReflDCo
+mkDehydrateCo co | isReflCo co       = ReflDCo
 mkDehydrateCo (SymCo (GRefl _ _ mco))
-                                   = mkGReflLeftDCo  mco
-mkDehydrateCo (GRefl _ _ mco)      = mkGReflRightDCo mco
-mkDehydrateCo (HydrateDCo _ _ dco) = dco
+                                     = mkGReflLeftDCo  mco
+mkDehydrateCo (GRefl _ _ mco)        = mkGReflRightDCo mco
+mkDehydrateCo (HydrateDCo _ _ dco _) = dco
 mkDehydrateCo (AxiomInstCo coax _branch cos)
   | all isReflCo cos -- AMG TODO: can we avoid the need for this check?
   , isOpenFamilyTyCon (coAxiomTyCon coax)  -- AMG TODO: need data families here or not?
@@ -1235,15 +1250,12 @@ mkDehydrateCo (AxiomInstCo coax _branch cos)
 mkDehydrateCo (AxiomRuleCo _coax cos)
   | all isReflCo cos  -- AMG TODO: can we avoid the need for this check?
   = singleStepDCo
-{-
-mkDehydrateCo (SubCo co) = mkDehydrateCo co
-  -- SLD TODO: causes a role mismatch in T13410,
-  -- probably because of overly restrictive Core Lint checks.
--}
 mkDehydrateCo (CoVarCo cv)
   = CoVarDCo cv
 mkDehydrateCo co
   = DehydrateCo co
+-- N.B. We don't have an equation "mkDehydrateCo (SubCo co) = mkDehydrateCo co",
+-- as that would lose information, causing problems if we have to rehydrate.
 
 singleStepDCo :: DCoercion
 singleStepDCo = StepsDCo 1
@@ -1805,8 +1817,8 @@ setNominalRole_maybe r co
       = NthCo Nominal n <$> setNominalRole_maybe (coercionRole co) co
     setNominalRole_maybe_helper (InstCo co arg)
       = InstCo <$> setNominalRole_maybe_helper co <*> pure arg
-    setNominalRole_maybe_helper (HydrateDCo r ty1 dco)
-      = HydrateDCo Nominal ty1 <$> setNominalRole_maybe_dco r ty1 dco
+    setNominalRole_maybe_helper (HydrateDCo r ty1 dco mrty)
+      = (\ d -> HydrateDCo Nominal ty1 d mrty) <$> setNominalRole_maybe_dco r ty1 dco
     setNominalRole_maybe_helper (UnivCo prov _ co1 co2)
       | Just prov' <- case prov of
                      PhantomProv _    -> Nothing  -- should always be phantom
@@ -2819,7 +2831,7 @@ seqCo (FunCo r w co1 co2)       = r `seq` seqCo w `seq` seqCo co1 `seq` seqCo co
 seqCo (CoVarCo cv)              = cv `seq` ()
 seqCo (HoleCo h)                = coHoleCoVar h `seq` ()
 seqCo (AxiomInstCo con ind cos) = con `seq` ind `seq` seqCos cos
-seqCo (HydrateDCo r t1 dco)     = r `seq` seqType t1 `seq` seqDCo dco
+seqCo (HydrateDCo r t1 dco mrty)= r `seq` seqType t1 `seq` seqDCo dco `seq` maybe () seqType mrty
 seqCo (UnivCo p r t1 t2)        = seqProv seqCo p `seq` r `seq` seqType t1
                                                           `seq` seqType t2
 seqCo (SymCo co)                = seqCo co
@@ -2903,7 +2915,7 @@ coercionLKind co
     go (FunCo _ w co1 co2)      = mkFunctionType (go w) (go co1) (go co2)
     go (CoVarCo cv)             = coVarLType cv
     go (HoleCo h)               = coVarLType (coHoleCoVar h)
-    go (HydrateDCo _ ty1 _)     = ty1
+    go (HydrateDCo _ ty1 _ _)   = ty1
     go (UnivCo _ _ ty1 _)       = ty1
     go (SymCo co)               = coercionRKind co
     go (TransCo co1 _)          = go co1
@@ -2959,7 +2971,8 @@ coercionRKind co
     go (CoVarCo cv)             = coVarRType cv
     go (HoleCo h)               = coVarRType (coHoleCoVar h)
     go (FunCo _ w co1 co2)      = mkFunctionType (go w) (go co1) (go co2)
-    go (HydrateDCo r ty1 dco)   = followDCo r ty1 dco
+    go (HydrateDCo r ty1 dco mrty)
+                                = maybe (followDCo r ty1 dco) id mrty
     go (UnivCo _ _ _ ty2)       = ty2
     go (SymCo co)               = coercionLKind co
     go (TransCo _ co2)          = go co2
@@ -3066,7 +3079,7 @@ coercionRole = go
     go (CoVarCo cv) = coVarRole cv
     go (HoleCo h)   = coVarRole (coHoleCoVar h)
     go (AxiomInstCo ax _ _) = coAxiomRole ax
-    go (HydrateDCo r _ _) = r
+    go (HydrateDCo r _ _ _) = r
     go (UnivCo _ r _ _)  = r
     go (SymCo co) = go co
     go (TransCo co1 _co2) = go co1

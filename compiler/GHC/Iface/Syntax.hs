@@ -1674,7 +1674,7 @@ freeNamesIfCoercion (IfaceCoVarCo _)   = emptyNameSet
 freeNamesIfCoercion (IfaceHoleCo _)    = emptyNameSet
 freeNamesIfCoercion (IfaceAxiomInstCo ax _ cos)
   = unitNameSet ax &&& fnList freeNamesIfCoercion cos
-freeNamesIfCoercion (IfaceHydrateDCo _ t1 dco)
+freeNamesIfCoercion (IfaceHydrateDCo _ t1 dco _)
   = freeNamesIfType t1 &&& freeNamesIfDCoercion dco
 freeNamesIfCoercion (IfaceUnivCo p _ t1 t2)
   = freeNamesIfProv freeNamesIfCoercion p &&& freeNamesIfType t1 &&& freeNamesIfType t2
