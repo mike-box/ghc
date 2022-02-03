@@ -818,9 +818,8 @@ HsInt insertSymbol(pathchar* obj_name, SymbolName* key, SymbolAddr* data)
 #if defined(OBJFORMAT_PEi386)
 SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent, SymType *type)
 {
-    (void)dependent; // TODO
     ASSERT_LOCK_HELD(&linker_mutex);
-    return lookupSymbol_PEi386(lbl, type);
+    return lookupSymbol_PEi386(lbl, dependent, type);
 }
 
 #else
@@ -1068,7 +1067,15 @@ static const char *memoryAccessDescription(MemoryAccess mode)
 void *
 mmapAnonForLinker (size_t bytes)
 {
-  return VirtualAlloc(NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  size_t size = 0;
+  /* For linking purposes we want to load code within a 4GB range from the
+     load address of the application.  As such we need to find a location to
+     allocate at.   */
+  void* region = allocaLocalBytes (bytes, &size);
+  if (region == NULL) {
+      return NULL;
+  }
+  return VirtualAlloc(region, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 }
 
 void
@@ -1722,7 +1729,7 @@ HsInt loadOc (ObjectCode* oc)
 {
    int r;
 
-   IF_DEBUG(linker, debugBelch("loadOc: start (%s)\n", oc->fileName));
+   IF_DEBUG(linker, debugBelch("loadOc: start (%" PATH_FMT ")\n", oc->fileName));
 
    /* verify the in-memory image */
 #  if defined(OBJFORMAT_ELF)
@@ -1753,8 +1760,7 @@ HsInt loadOc (ObjectCode* oc)
       symbol table.  Allocating space for jump tables in ocAllocateExtras
       would just be a waste then as we'll be stopping further processing of the
       library in the next few steps. If necessary, the actual allocation
-      happens in `ocGetNames_PEi386` and `ocAllocateExtras_PEi386` simply
-      set the correct pointers.
+      happens in `ocGetNames_PEi386` simply set the correct pointers.
       */
 
 #if defined(NEED_SYMBOL_EXTRAS)
@@ -1790,12 +1796,6 @@ HsInt loadOc (ObjectCode* oc)
        return r;
    }
 
-#if defined(NEED_SYMBOL_EXTRAS)
-#  if defined(OBJFORMAT_PEi386)
-   ocAllocateExtras_PEi386 ( oc );
-#  endif
-#endif
-
    /* Loaded, but not resolved yet, ensure the OC is in a consistent state.
       If a target has requested the ObjectCode not to be resolved then honor
       this requests.  Usually this means the ObjectCode has not been initialized
@@ -1807,7 +1807,7 @@ HsInt loadOc (ObjectCode* oc)
            oc->status = OBJECT_LOADED;
        }
    }
-   IF_DEBUG(linker, debugBelch("loadOc: done (%s).\n", oc->fileName));
+   IF_DEBUG(linker, debugBelch("loadOc: done (%" PATH_FMT ").\n", oc->fileName));
 
    return 1;
 }
