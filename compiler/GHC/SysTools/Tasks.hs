@@ -380,11 +380,6 @@ runWindres logger dflags args = traceToolCommand logger "windres" $ do
               [ Option ("--preprocessor=" ++ quote cc) ]
               ++ map (Option . ("--preprocessor-arg=" ++))
                      (map showOpt opts ++ ["-E", "-xc", "-DRC_INVOKED"])
-              -- ...but if we do that then if windres calls popen then
-              -- it can't understand the quoting, so we have to use
-              -- --use-temp-file so that it interprets it correctly.
-              -- See #1828.
-              ++ [ Option "--use-temp-file" ]
               ++ args
   mb_env <- getGccEnv cc_args
   runSomethingFiltered logger id "Windres" windres args' Nothing mb_env
