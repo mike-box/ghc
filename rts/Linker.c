@@ -186,6 +186,17 @@ static void ghciRemoveSymbolTable(StrHashTable *table, const SymbolName* key,
     stgFree(pinfo);
 }
 
+static const char *
+symbolTypeString (SymType type)
+{
+    switch (type) {
+        case SYM_TYPE_CODE: return "code";
+        case SYM_TYPE_DATA: return "data";
+        case SYM_TYPE_INDIRECT_DATA: return "indirect-data";
+        default: barf("symbolTypeString: unknown symbol type");
+    }
+}
+
 /* -----------------------------------------------------------------------------
  * Insert symbols into hash tables, checking for duplicates.
  *
@@ -213,6 +224,7 @@ int ghciInsertSymbolTable(
    const SymbolName* key,
    SymbolAddr* data,
    SymStrength strength,
+   SymType type,
    ObjectCode *owner)
 {
    RtsSymbolInfo *pinfo = lookupStrHashTable(table, key);
@@ -222,8 +234,19 @@ int ghciInsertSymbolTable(
       pinfo->value = data;
       pinfo->owner = owner;
       pinfo->strength = strength;
+      pinfo->type = type;
       insertStrHashTable(table, key, pinfo);
       return 1;
+   }
+   else if (pinfo->type != type)
+   {
+       debugBelch("Symbol type mismatch.\n");
+       debugBelch("Symbol %s was defined by %" PATH_FMT " to be a %s symbol.\n",
+                  key, obj_name, symbolTypeString(type));
+       debugBelch("      yet was defined by %" PATH_FMT " to be a %s symbol.\n",
+                  pinfo->owner ? pinfo->owner->fileName : "<builtin>",
+                  symbolTypeString(pinfo->type));
+       return 1;
    }
    else if (pinfo->strength == STRENGTH_STRONG)
    {
@@ -399,7 +422,7 @@ initLinker_ (int retain_cafs)
     for (const RtsSymbolVal *sym = rtsSyms; sym->lbl != NULL; sym++) {
         if (! ghciInsertSymbolTable(WSTR("(GHCi built-in symbols)"),
                                     symhash, sym->lbl, sym->addr,
-                                    sym->strength, NULL)) {
+                                    sym->strength, sym->type, NULL)) {
             barf("ghciInsertSymbolTable failed");
         }
         IF_DEBUG(linker, debugBelch("initLinker: inserting rts symbol %s, %p\n", sym->lbl, sym->addr));
@@ -409,7 +432,7 @@ initLinker_ (int retain_cafs)
     if (! ghciInsertSymbolTable(WSTR("(GHCi built-in symbols)"), symhash,
                                 MAYBE_LEADING_UNDERSCORE_STR("newCAF"),
                                 retain_cafs ? newRetainedCAF : newGCdCAF,
-                                HS_BOOL_FALSE, NULL)) {
+                                HS_BOOL_FALSE, SYM_TYPE_CODE, NULL)) {
         barf("ghciInsertSymbolTable failed");
     }
 
@@ -776,14 +799,14 @@ HsBool removeLibrarySearchPath(HsPtr dll_path_index)
 }
 
 /* -----------------------------------------------------------------------------
- * insert a symbol in the hash table
+ * insert a code symbol in the hash table
  *
  * Returns: 0 on failure, nonzero on success
  */
 HsInt insertSymbol(pathchar* obj_name, SymbolName* key, SymbolAddr* data)
 {
     return ghciInsertSymbolTable(obj_name, symhash, key, data, HS_BOOL_FALSE,
-                                 NULL);
+                                 SYM_TYPE_CODE, NULL);
 }
 
 /* -----------------------------------------------------------------------------
@@ -793,16 +816,16 @@ HsInt insertSymbol(pathchar* obj_name, SymbolName* key, SymbolAddr* data)
  * symbol.
  */
 #if defined(OBJFORMAT_PEi386)
-SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
+SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent, SymType *type)
 {
     (void)dependent; // TODO
     ASSERT_LOCK_HELD(&linker_mutex);
-    return lookupSymbol_PEi386(lbl);
+    return lookupSymbol_PEi386(lbl, type);
 }
 
 #else
 
-SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
+SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent, SymType *type)
 {
     ASSERT_LOCK_HELD(&linker_mutex);
     IF_DEBUG(linker_verbose, debugBelch("lookupSymbol: looking up '%s'\n", lbl));
@@ -826,6 +849,11 @@ SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
 
 #       if defined(OBJFORMAT_ELF)
         SymbolAddr *ret = internal_dlsym(lbl);
+        if (type) {
+            // We assume that the symbol is code since this is usually the case
+            // and dlsym doesn't tell us.
+            *type = SYM_TYPE_CODE;
+        }
 
         // Generally the dynamic linker would define _DYNAMIC, which is
         // supposed to point to various bits of dynamic linker state (see
@@ -836,6 +864,9 @@ SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
         if (ret == NULL && strcmp(lbl, "_DYNAMIC") == 0) {
             static void *RTS_DYNAMIC = NULL;
             ret = (SymbolAddr *) &RTS_DYNAMIC;
+            if (type) {
+                *type = SYM_TYPE_DATA;
+            }
         }
         return ret;
 #       elif defined(OBJFORMAT_MACHO)
@@ -849,6 +880,11 @@ SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
         IF_DEBUG(linker, debugBelch("lookupSymbol: looking up %s with dlsym\n",
                                     lbl));
         CHECK(lbl[0] == '_');
+        if (type) {
+            // We assume that the symbol is code since this is usually the case
+            // and dlsym doesn't tell us.
+            *type = SYM_TYPE_CODE;
+        }
         return internal_dlsym(lbl + 1);
 
 #       else
@@ -858,6 +894,10 @@ SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
         static void *RTS_NO_FINI = NULL;
         if (strcmp(lbl, "__fini_array_end") == 0) { return (SymbolAddr *) &RTS_NO_FINI; }
         if (strcmp(lbl, "__fini_array_start") == 0) { return (SymbolAddr *) &RTS_NO_FINI; }
+        if (type) {
+            // This is an assumption
+            *type = pinfo->type;
+        }
 
         if (dependent) {
             // Add dependent as symbol's owner's dependency
@@ -946,7 +986,7 @@ SymbolAddr* lookupSymbol( SymbolName* lbl )
     ACQUIRE_LOCK(&linker_mutex);
     // NULL for "don't add dependent". When adding a dependency we call
     // lookupDependentSymbol directly.
-    SymbolAddr* r = lookupDependentSymbol(lbl, NULL);
+    SymbolAddr* r = lookupDependentSymbol(lbl, NULL, NULL);
     if (!r) {
         errorBelch("^^ Could not load '%s', dependency unresolved. "
                    "See top entry above.\n", lbl);
@@ -1802,7 +1842,8 @@ int ocTryLoad (ObjectCode* oc) {
         if (   symbol.name
             && !ghciInsertSymbolTable(oc->fileName, symhash, symbol.name,
                                       symbol.addr,
-                                      isSymbolWeak(oc, symbol.name), oc)) {
+                                      isSymbolWeak(oc, symbol.name),
+                                      symbol.type, oc)) {
             return 0;
         }
     }
