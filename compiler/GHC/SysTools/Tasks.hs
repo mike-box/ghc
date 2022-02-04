@@ -378,7 +378,7 @@ runWindres logger dflags args = traceToolCommand logger "windres" $ do
               -- spaces then windres fails to run gcc. We therefore need
               -- to tell it what command to use...
               [ Option ("--preprocessor=" ++ quote cc) ]
-              ++ map (Option . ("--preprocessor-arg=" ++) . quote)
+              ++ map (Option . ("--preprocessor-arg=" ++))
                      (map showOpt opts ++ ["-E", "-xc", "-DRC_INVOKED"])
               -- ...but if we do that then if windres calls popen then
               -- it can't understand the quoting, so we have to use
