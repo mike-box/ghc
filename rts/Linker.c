@@ -1699,8 +1699,8 @@ static HsInt loadObj_ (pathchar *path)
        return 1; // success
    }
 
-   if (isArchive(path)) {
-       return loadArchive(path);
+   if (isArchive(path) && loadArchive(path)) {
+       return 1; // success
    }
 
    ObjectCode *oc = preloadObjectFile(path);
