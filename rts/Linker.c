@@ -1654,7 +1654,7 @@ preloadObjectFile (pathchar *path)
 
    image = stgMallocBytes(fileSize, "loadObj(image)");
 
-#endif
+#endif /* !defined(darwin_HOST_OS) */
 
    int n;
    n = fread ( image, 1, fileSize, f );
@@ -1697,6 +1697,10 @@ static HsInt loadObj_ (pathchar *path)
        IF_DEBUG(linker,
                 debugBelch("ignoring repeated load of %" PATH_FMT "\n", path));
        return 1; // success
+   }
+
+   if (isArchive(path)) {
+       return loadArchive(path);
    }
 
    ObjectCode *oc = preloadObjectFile(path);

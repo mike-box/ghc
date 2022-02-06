@@ -631,3 +631,19 @@ HsInt loadArchive (pathchar *path)
    RELEASE_LOCK(&linker_mutex);
    return r;
 }
+
+bool isArchive (pathchar *path)
+{
+    static const char ARCHIVE_HEADER[] = "!<arch>\n";
+    char buffer[10];
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        return false;
+    }
+
+    if (fread(buffer, 1, sizeof(buffer), f) < sizeof(buffer)) {
+        return false;
+    }
+    fclose(f);
+    return strncmp(ARCHIVE_HEADER, buffer, sizeof(ARCHIVE_HEADER)-1);
+}

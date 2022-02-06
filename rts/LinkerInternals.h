@@ -442,6 +442,9 @@ pathchar*
 resolveSymbolAddr (pathchar* buffer, int size,
                    SymbolAddr* symbol, uintptr_t* top);
 
+/* defined in LoadArchive.c */
+bool isArchive (pathchar *path);
+
 /*************************************************
  * Various bits of configuration
  *************************************************/
