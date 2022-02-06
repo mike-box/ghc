@@ -244,7 +244,7 @@ int ghciInsertSymbolTable(
        debugBelch("Symbol %s was defined by %" PATH_FMT " to be a %s symbol.\n",
                   key, obj_name, symbolTypeString(type));
        debugBelch("      yet was defined by %" PATH_FMT " to be a %s symbol.\n",
-                  pinfo->owner ? pinfo->owner->fileName : "<builtin>",
+                  pinfo->owner ? pinfo->owner->fileName : WSTR("<builtin>"),
                   symbolTypeString(pinfo->type));
        return 1;
    }
