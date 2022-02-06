@@ -444,6 +444,7 @@ resolveSymbolAddr (pathchar* buffer, int size,
 
 /* defined in LoadArchive.c */
 bool isArchive (pathchar *path);
+HsInt loadArchive_ (pathchar *path);
 
 /*************************************************
  * Various bits of configuration

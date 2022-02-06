@@ -1699,8 +1699,13 @@ static HsInt loadObj_ (pathchar *path)
        return 1; // success
    }
 
-   if (isArchive(path) && loadArchive(path)) {
-       return 1; // success
+   if (isArchive(path)) {
+       if (loadArchive_(path)) {
+            return 1; // success
+       } else {
+            IF_DEBUG(linker,
+                        debugBelch("tried and failed to load %" PATH_FMT " as an archive\n", path));
+       }
    }
 
    ObjectCode *oc = preloadObjectFile(path);
