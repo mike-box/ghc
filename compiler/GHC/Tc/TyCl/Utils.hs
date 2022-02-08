@@ -164,6 +164,7 @@ synonymTyConsOfType ty
      go_dco (TransDCo co co')      = go_dco co `plusNameEnv` go_dco co'
      go_dco (DehydrateCo co)       = go_co co
      go_dco (UnivDCo prov rhs)     = go_prov go_dco prov `plusNameEnv` go rhs
+     go_dco (SubDCo dco)           = go_dco dco
 
      go_prov syns (PhantomProv co)     = syns co
      go_prov syns (ProofIrrelProv co)  = syns co

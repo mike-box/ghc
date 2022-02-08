@@ -3162,14 +3162,14 @@ rewriteEvidence old_ev (Reduction _old_pred dco new_pred)
 
 rewriteEvidence ev@(CtGiven { ctev_evar = old_evar, ctev_loc = loc }) (Reduction old_pred dco new_pred)
   = do { let
-          co = mkHydrateDCo (ctEvRole ev) old_pred dco (Just new_pred)
+          dco' = downgradeDCoToRepresentational (ctEvRole ev) old_pred dco new_pred
+          co = mkHydrateDCo Representational old_pred dco' (Just new_pred)
           -- NB: this call to mkHydrateDCo is OK, because of the invariant
           -- on the LHS type stored in a Reduction. See Note [The Reduction type]
           -- in GHC.Core.Reduction.
 
           -- mkEvCast optimises ReflCo
-          new_tm = mkEvCast (evId old_evar)
-                      (tcDowngradeRole Representational (ctEvRole ev) co)
+          new_tm = mkEvCast (evId old_evar) co
        ; new_ev <- newGivenEvVar loc (new_pred, new_tm)
        ; continueWith new_ev }
 
@@ -3179,15 +3179,15 @@ rewriteEvidence ev@(CtWanted { ctev_dest = dest
   = do { mb_new_ev <- newWanted_SI si loc new_pred
                -- The "_SI" variant ensures that we make a new Wanted
                -- with the same shadow-info as the existing one (#16735)
-       ; let co = mkHydrateDCo (ctEvRole ev) old_pred dco (Just new_pred)
+       ; let
+          dco' = downgradeDCoToRepresentational (ctEvRole ev) old_pred dco new_pred
+          co   = mkHydrateDCo Representational old_pred dco' (Just new_pred)
           -- NB: this call to mkHydrateDCo is OK, because of the invariant
           -- on the LHS type stored in a Reduction. See Note [The Reduction type]
           -- in GHC.Core.Reduction.
 
-       ; massert (tcCoercionRole co == ctEvRole ev)
        ; setWantedEvTerm dest
-            (mkEvCast (getEvExpr mb_new_ev)
-                      (tcDowngradeRole Representational (ctEvRole ev) (mkSymCo co)))
+            (mkEvCast (getEvExpr mb_new_ev) (mkSymCo co))
        ; case mb_new_ev of
             Fresh  new_ev -> continueWith new_ev
             Cached _      -> stopWith ev "Cached wanted" }

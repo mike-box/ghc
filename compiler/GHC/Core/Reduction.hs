@@ -9,6 +9,7 @@ module GHC.Core.Reduction
      Reductions(..),
      mkReduction, mkReductions, mkHetReduction, mkDehydrateCoercionRedn,
      mkHydrateReductionDCoercion,
+     mkSubRedn,
      mkTransRedn, mkCoherenceRightRedn, mkCoherenceRightMRedn,
      mkCastRedn1, mkCastRedn2,
      mkReflRedn, mkGReflRightRedn, mkGReflRightMRedn,
@@ -157,21 +158,32 @@ mkDehydrateCoercionRedn co =
 {-# INLINE mkDehydrateCoercionRedn #-}
 
 -- | Hydrate the 'DCoercion' stored inside a 'Reduction' into a full-fledged 'Coercion'.
---
--- We use the LHS type stored in the 'Reduction' to ensure we satisfy the Hydration invariant
--- of Note [The Hydration invariant] in GHC.Core.Coercion.
-mkHydrateReductionDCoercion :: Role -> Reduction -> Coercion
+mkHydrateReductionDCoercion :: HasDebugCallStack => Role -> Reduction -> Coercion
 mkHydrateReductionDCoercion r (Reduction lty dco rty) = mkHydrateDCo r lty dco (Just rty)
-{-# INLINE mkHydrateReductionDCoercion  #-}
+  -- N.B.: we use the LHS type stored in the 'Reduction' to ensure
+  -- we satisfy the Hydration invariant of Note [The Hydration invariant]
+  -- in GHC.Core.Coercion.
+{-# INLINE mkHydrateReductionDCoercion #-}
+
+-- | Downgrade the role of the directed coercion stored in the 'Reduction',
+-- from 'Nominal' to 'Representational'.
+mkSubRedn :: Reduction -> Reduction
+mkSubRedn redn@(Reduction lhs dco rhs)
+  = redn { reductionDCoercion = mkSubDCo lhs dco rhs }
+{-# INLINE mkSubRedn #-}
 
 -- | Compose two reductions.
 --
 -- Assumes that forming a composite is valid, i.e. the RHS type of
 -- the first directed coercion equals, up to zonking,
 -- the LHS type of the second directed coercion.
+--
+-- Warning: this function is not guaranteed to preserve the Hydration invariant
+-- as required by Note [The Reduction type]. You must manually ensure this
+-- invariant.
 mkTransRedn :: Reduction -> Reduction -> Reduction
-mkTransRedn (Reduction ty1 co1 _) (Reduction _ co2 ty2)
-  = Reduction ty1 (co1 `mkTransDCo` co2) ty2
+mkTransRedn (Reduction ty1 dco1 _) (Reduction _ dco2 ty2)
+  = Reduction ty1 (dco1 `mkTransDCo` dco2) ty2
 {-# INLINE mkTransRedn #-}
 
 -- | The reflexive reduction.
@@ -419,6 +431,7 @@ mkReflRedns tys = mkReductions tys (mkReflDCos tys) tys
 
 mkReflDCos :: [Type] -> [DCoercion]
 mkReflDCos tys = replicate (length tys) mkReflDCo
+{-# INLINE mkReflDCos #-}
 
 -- | Combines 'mkAppCos' and 'mkAppTys'.
 mkAppRedns :: Reduction -> Reductions -> Reduction
@@ -427,12 +440,17 @@ mkAppRedns (Reduction ty1 co ty2) (Reductions tys1 cos tys2)
 {-# INLINE mkAppRedns #-}
 
 -- | 'TyConAppCo' for 'Reduction's: combines 'mkTyConAppCo' and `mkTyConApp`.
+--
+-- Use this when you know the 'TyCon' is not a type synonym. If it might be,
+-- use 'mkTyConAppRedn_MightBeSynonym'.
 mkTyConAppRedn :: TyCon -> Reductions -> Reduction
 mkTyConAppRedn tc (Reductions tys1 cos tys2)
   = mkReduction (mkTyConApp tc tys1) (mkTyConAppDCo cos) (mkTyConApp tc tys2)
 {-# INLINE mkTyConAppRedn #-}
 
 -- | 'TyConAppCo' for 'Reduction's: combines 'mkTyConAppCo' and `mkTyConApp`.
+--
+-- Use 'mkTyConAppRedn' if the 'TyCon' is definitely not a type synonym.
 mkTyConAppRedn_MightBeSynonym :: Role -> TyCon -> Reductions -> Reduction
 mkTyConAppRedn_MightBeSynonym role tc redns@(Reductions tys1 dcos tys2)
   -- 'mkTyConAppCo' handles synomyms by using substitution lifting.
@@ -440,15 +458,20 @@ mkTyConAppRedn_MightBeSynonym role tc redns@(Reductions tys1 dcos tys2)
   -- so that we can call 'liftCoSubst'.
   -- In the future, it might be desirable to implement substitution lifting
   -- for directed coercions to avoid this (and a similar issue in simplifyArgsWorker).
-  | Just (tv_co_prs, rhs_ty, leftover_cos) <- expandSynTyCon_maybe tc cos
+  | Just (tv_dco_prs, rhs_ty, leftover_dcos) <- expandSynTyCon_maybe tc dcos
+  , let tv_co_prs = zipWith4 hydrate (tyConRolesX role tc) tys1 tv_dco_prs tys2
   = mkReduction
       (mkTyConApp tc tys1)
-      (mkDehydrateCo $ mkAppCos (liftCoSubst role (mkLiftingContext tv_co_prs) rhs_ty) leftover_cos)
+      (mkAppDCos (mkDehydrateCo $ liftCoSubst role (mkLiftingContext tv_co_prs) rhs_ty) leftover_dcos)
       (mkTyConApp tc tys2)
   | otherwise = mkTyConAppRedn tc redns
   where
-    cos = zipWith4 hydrate (tyConRolesX role tc) tys1 dcos tys2
-    hydrate r l d t = mkHydrateDCo r l d (Just t)
+    hydrate r l (tv,dco) t = (tv, mkHydrateDCo r l dco (Just t))
+    -- N.B.: we are hydrating using the LHS argument types,
+    -- which are stored in 'Reductions'.
+    -- This upholds the necessary hydration invariant from
+    -- Note [The Hydration invariant] in GHC.Core.Coercion.
+    {-# INLINE hydrate #-}
 {-# INLINE mkTyConAppRedn_MightBeSynonym #-}
 
 -- | Reduce the arguments of a 'Class' 'TyCon'.
@@ -911,8 +934,10 @@ simplifyArgsWorker orig_ki_binders orig_inner_ki orig_fvs
                       = mkCoherenceRightRedn arg_redn kind_co
          -- now, extend the lifting context with the new binding
              !new_lc | Just tv <- tyCoBinderVar_maybe binder
-                     = extendLiftingContextAndInScope lc tv (mkHydrateDCo role arg_ty casted_co (Just casted_xi))
-                     -- NB: this is the crucial place where we need the hydration invariant.
+                     = extendLiftingContextAndInScope lc tv
+                       (mkHydrateDCo role arg_ty casted_co (Just casted_xi))
+                     -- NB: this is the crucial place where we need the hydration invariant,
+                     -- which is satisfied here as we use the LHS type stored in a 'Reduction'.
                      -- See Note [The Reduction type], as well as
                      -- Note [The Hydration invariant] in GHC.Core.Coercion.
                      -- This could be avoided if we had substitution lifting for directed coercions.

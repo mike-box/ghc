@@ -690,7 +690,7 @@ rnIfaceCo (IfaceHoleCo lcl)  = IfaceHoleCo  <$> pure lcl
 rnIfaceCo (IfaceAxiomInstCo n i cs)
     = IfaceAxiomInstCo <$> rnIfaceGlobal n <*> pure i <*> mapM rnIfaceCo cs
 rnIfaceCo (IfaceHydrateDCo r t1 dco t2)
-    = IfaceHydrateDCo r <$> rnIfaceType t1 <*> rnIfaceDCo dco <*> traverse rnIfaceType t2
+    = IfaceHydrateDCo r <$> rnIfaceType t1 <*> rnIfaceDCo dco <*> rnIfaceType t2
 rnIfaceCo (IfaceUnivCo s r t1 t2)
     = IfaceUnivCo <$> rnIfaceProv rnIfaceCo s <*> pure r <*> rnIfaceType t1 <*> rnIfaceType t2
 rnIfaceCo (IfaceSymCo c)
@@ -733,6 +733,8 @@ rnIfaceDCo (IfaceDehydrateCo co)
   = IfaceDehydrateCo <$> rnIfaceCo co
 rnIfaceDCo (IfaceUnivDCo prov rhs)
   = IfaceUnivDCo <$> rnIfaceProv rnIfaceDCo prov <*> rnIfaceType rhs
+rnIfaceDCo (IfaceSubDCo dco)
+  = IfaceSubDCo <$> rnIfaceDCo dco
 
 rnIfaceProv :: Rename iface_co -> Rename (IfaceUnivCoProv iface_co)
 rnIfaceProv rn_thing (IfacePhantomProv    iface_co) = IfacePhantomProv    <$> rn_thing iface_co

@@ -1716,6 +1716,7 @@ freeNamesIfDCoercion (IfaceTransDCo c1 c2)
   = freeNamesIfDCoercion c1 &&& freeNamesIfDCoercion c2
 freeNamesIfDCoercion (IfaceDehydrateCo co) = freeNamesIfCoercion co
 freeNamesIfDCoercion (IfaceUnivDCo p rhs)  = freeNamesIfProv freeNamesIfDCoercion p &&& freeNamesIfType rhs
+freeNamesIfDCoercion (IfaceSubDCo dco) = freeNamesIfDCoercion dco
 
 freeNamesIfProv :: (co -> NameSet) -> IfaceUnivCoProv co -> NameSet
 freeNamesIfProv free_names (IfacePhantomProv co)    = free_names co

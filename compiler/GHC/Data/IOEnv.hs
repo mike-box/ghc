@@ -67,6 +67,7 @@ newtype IOEnv env a = IOEnv' (env -> IO a)
 -- See Note [The one-shot state monad trick] in GHC.Utils.Monad
 instance Functor (IOEnv env) where
    fmap f (IOEnv g) = IOEnv $ \env -> fmap f (g env)
+   {-# INLINE fmap #-} -- Important in T9872c.
    a <$ IOEnv g     = IOEnv $ \env -> g env >> pure a
 
 instance MonadIO (IOEnv env) where

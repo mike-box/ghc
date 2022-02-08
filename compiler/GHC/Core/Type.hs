@@ -617,8 +617,8 @@ expandTypeSynonyms ty
       = substCoVar subst cv
     go_co subst (AxiomInstCo ax ind args)
       = mkAxiomInstCo ax ind (map (go_co subst) args)
-    go_co subst (HydrateDCo r t1 dco mt2)
-      = mkHydrateDCo r (go subst t1) (go_dco subst dco) (fmap (go subst) mt2)
+    go_co subst (HydrateDCo r t1 dco t2)
+      = mkHydrateDCo r (go subst t1) (go_dco subst dco) (Just $ go subst t2)
     go_co subst (UnivCo p r t1 t2)
       = mkUnivCo (go_prov (go_co subst) p) r (go subst t1) (go subst t2)
     go_co subst (SymCo co)
@@ -663,6 +663,7 @@ expandTypeSynonyms ty
       = mkTransDCo (go_dco subst co1) (go_dco subst co2)
     go_dco subst (DehydrateCo co) = mkDehydrateCo (go_co subst co)
     go_dco subst (UnivDCo p rhs)  = mkUnivDCo (go_prov (go_dco subst) p) (go subst rhs)
+    go_dco subst (SubDCo dco)     = SubDCo (go_dco subst dco)
 
     go_prov do_subst (PhantomProv co)    = PhantomProv    $ do_subst co
     go_prov do_subst (ProofIrrelProv co) = ProofIrrelProv $ do_subst co
@@ -993,7 +994,7 @@ mapTyCoX (TyCoMapper { tcm_tyvar = tyvar
     go_co env (FunCo r cw c1 c2)   = mkFunCo r <$> go_co env cw <*> go_co env c1 <*> go_co env c2
     go_co env (CoVarCo cv)        = covar env cv
     go_co env (HoleCo hole)       = cohole env hole
-    go_co env (HydrateDCo r t1 dco mt2) = mkHydrateDCo r <$> go_ty env t1 <*> go_dco env dco <*> traverse (go_ty env) mt2
+    go_co env (HydrateDCo r t1 dco t2) = mkHydrateDCo r <$> go_ty env t1 <*> go_dco env dco <*> (Just <$> go_ty env t2)
     go_co env (UnivCo p r t1 t2)  = mkUnivCo <$> go_prov (go_co env) p <*> pure r
                                     <*> go_ty env t1 <*> go_ty env t2
     go_co env (SymCo co)          = mkSymCo <$> go_co env co
@@ -1049,6 +1050,7 @@ mapTyCoX (TyCoMapper { tcm_tyvar = tyvar
            ; return $ mkForAllDCo tv' kind_dco' co' }
         -- See Note [Efficiency for ForAllCo case of mapTyCoX]
     go_dco env (UnivDCo p rhs)     = mkUnivDCo <$> go_prov (go_dco env) p <*> go_ty env rhs
+    go_dco env (SubDCo dco)        = SubDCo <$> go_dco env dco
 
     go_prov go (PhantomProv co)    = PhantomProv    <$> go co
     go_prov go (ProofIrrelProv co) = ProofIrrelProv <$> go co
@@ -3398,10 +3400,10 @@ occCheckExpand vs_to_avoid ty
 
     go_co cxt (AxiomInstCo ax ind args) = do { args' <- mapM (go_co cxt) args
                                              ; return (mkAxiomInstCo ax ind args') }
-    go_co ctx (HydrateDCo r ty1 dco mty2)= do { ty1' <- go ctx ty1
-                                              ; dco' <- go_dco ctx dco
-                                              ; mty2' <- fmap (go ctx) mty2
-                                              ; return (mkHydrateDCo r ty1' dco' mty2') }
+    go_co ctx (HydrateDCo r ty1 dco ty2)= do { ty1' <- go ctx ty1
+                                             ; dco' <- go_dco ctx dco
+                                             ; ty2' <- go ctx ty2
+                                             ; return (mkHydrateDCo r ty1' dco' (Just ty2')) }
     go_co cxt (UnivCo p r ty1 ty2)      = do { p' <- go_prov (go_co cxt) p
                                              ; ty1' <- go cxt ty1
                                              ; ty2' <- go cxt ty2
@@ -3454,6 +3456,7 @@ occCheckExpand vs_to_avoid ty
                                            ; co2' <- go_dco cxt co2
                                            ; return (mkTransDCo co1' co2') }
     go_dco ctx (UnivDCo prov rhs)     = mkUnivDCo <$> go_prov (go_dco ctx) prov <*> go ctx rhs
+    go_dco ctx (SubDCo dco)           = SubDCo <$> go_dco ctx dco
     go_dco cxt (DehydrateCo co)       = mkDehydrateCo <$> go_co cxt co
 
     ------------------
@@ -3525,6 +3528,7 @@ tyConsOfType ty
      go_dco (TransDCo co1 co2)        = go_dco co1 `unionUniqSets` go_dco co2
      go_dco (DehydrateCo co)          = go_co co
      go_dco (UnivDCo p rhs)           = go_prov go_dco p `unionUniqSets` go rhs
+     go_dco (SubDCo dco)              = go_dco dco
 
      go_prov get_tycons (PhantomProv co)    = get_tycons co
      go_prov get_tycons (ProofIrrelProv co) = get_tycons co

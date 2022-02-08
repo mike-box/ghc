@@ -161,8 +161,8 @@ normaliseFfiType' env ty0 = runWriterT $ go Representational initRecTc ty0
                       ; return $ mkDehydrateCoercionRedn nt_co `mkTransRedn` redn } } -- AMG TODO
 
         | isFamilyTyCon tc              -- Expand open tycons
-        , redn0@(Reduction _ co ty) <- normaliseTcApp env role tc tys
-        , not (isReflDCo co) -- AMG TODO: was isReflexiveCo; does this matter?
+        , redn0@(Reduction l_ty dco ty) <- normaliseTcApp env role tc tys
+        , not (isReflexiveDCo role l_ty dco)
         = do redn <- go role rec_nts ty
              return $ redn0 `mkTransRedn` redn
 

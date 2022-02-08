@@ -696,6 +696,7 @@ tyCoFVsOfDCo StepsDCo{}           fv_cand in_scope acc = emptyFV fv_cand in_scop
 tyCoFVsOfDCo (TransDCo dco1 dco2) fv_cand in_scope acc = (tyCoFVsOfDCo dco1 `unionFV` tyCoFVsOfDCo dco2) fv_cand in_scope acc
 tyCoFVsOfDCo (DehydrateCo co)     fv_cand in_scope acc = tyCoFVsOfCo co fv_cand in_scope acc
 tyCoFVsOfDCo (UnivDCo p rhs)      fv_cand in_scope acc = (tyCoFVsOfProv tyCoFVsOfDCo p `unionFV` tyCoFVsOfType rhs) fv_cand in_scope acc
+tyCoFVsOfDCo (SubDCo dco)         fv_cand in_scope acc = tyCoFVsOfDCo dco fv_cand in_scope acc
 
 ----- Whether a covar is /Almost Devoid/ in a type or coercion ----
 
@@ -792,6 +793,8 @@ almost_devoid_co_var_of_dco (DehydrateCo co) cv
 almost_devoid_co_var_of_dco (UnivDCo prov rhs) cv
   = almost_devoid_co_var_of_prov almost_devoid_co_var_of_dco prov cv
   && almost_devoid_co_var_of_type rhs cv
+almost_devoid_co_var_of_dco (SubDCo dco) cv
+  = almost_devoid_co_var_of_dco dco cv
 
 almost_devoid_co_var_of_prov :: (co -> CoVar -> Bool) -> UnivCoProvenance co -> CoVar -> Bool
 almost_devoid_co_var_of_prov almost_devoid_co (PhantomProv co) cv

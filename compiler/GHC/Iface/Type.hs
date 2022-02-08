@@ -383,7 +383,7 @@ data IfaceCoercion
        -- There are only a fixed number of CoAxiomRules, so it suffices
        -- to use an IfaceLclName to distinguish them.
        -- See Note [Adding built-in type families] in GHC.Builtin.Types.Literals
-  | IfaceHydrateDCo   Role IfaceType IfaceDCoercion (Maybe IfaceType)
+  | IfaceHydrateDCo   Role IfaceType IfaceDCoercion IfaceType
   | IfaceUnivCo       (IfaceUnivCoProv IfaceCoercion) Role IfaceType IfaceType
   | IfaceSymCo        IfaceCoercion
   | IfaceTransCo      IfaceCoercion IfaceCoercion
@@ -408,6 +408,7 @@ data IfaceDCoercion
   | IfaceStepsDCo      !Int
   | IfaceTransDCo      IfaceDCoercion IfaceDCoercion
   | IfaceDehydrateCo   IfaceCoercion
+  | IfaceSubDCo        IfaceDCoercion
   | IfaceUnivDCo       (IfaceUnivCoProv IfaceDCoercion) IfaceType
 
 data IfaceUnivCoProv iface_co
@@ -600,7 +601,7 @@ substIfaceType env ty
     go_co (IfaceCoVarCo cv)          = IfaceCoVarCo cv
     go_co (IfaceHoleCo cv)           = IfaceHoleCo cv
     go_co (IfaceAxiomInstCo a i cos) = IfaceAxiomInstCo a i (go_cos cos)
-    go_co (IfaceHydrateDCo r t1 dco mt2)= IfaceHydrateDCo r (go t1) (go_dco dco) (go <$> mt2)
+    go_co (IfaceHydrateDCo r t1 dco mt2)= IfaceHydrateDCo r (go t1) (go_dco dco) (go mt2)
     go_co (IfaceUnivCo prov r t1 t2) = IfaceUnivCo (go_prov go_co prov) r (go t1) (go t2)
     go_co (IfaceSymCo co)            = IfaceSymCo (go_co co)
     go_co (IfaceTransCo co1 co2)     = IfaceTransCo (go_co co1) (go_co co2)
@@ -623,6 +624,7 @@ substIfaceType env ty
     go_dco dco@IfaceStepsDCo{}         = dco
     go_dco (IfaceTransDCo co1 co2)     = IfaceTransDCo (go_dco co1) (go_dco co2)
     go_dco (IfaceDehydrateCo co)       = IfaceDehydrateCo (go_co co)
+    go_dco (IfaceSubDCo dco)           = IfaceSubDCo (go_dco dco)
     go_dco (IfaceUnivDCo p rhs)        = IfaceUnivDCo (go_prov go_dco p) (go rhs)
 
     go_cos = map go_co
@@ -1875,6 +1877,9 @@ ppr_dco _ (IfaceUnivDCo prov rhs)
   = text "UnivDCo" <> (parens $
       sep [ pprIfaceUnivCoProv pprParendIfaceDCoercion prov
           , dcolon <+> text "_ ~>" <+> ppr_ty appPrec rhs ])
+ppr_dco ctxt_prec (IfaceSubDCo dco)
+  = maybeParen ctxt_prec appPrec $
+    text "Sub" <+> ppr_dco appPrec dco
 
 -- AMG TODO: deduplicate some of the pretty-printing code
 ppr_special_dco :: PprPrec -> SDoc -> [IfaceDCoercion] -> SDoc
@@ -2175,13 +2180,8 @@ instance Binary IfaceCoercion where
           putByte bh 17
           put_ bh a
           put_ bh b
-  put_ bh (IfaceHydrateDCo r ty dco Nothing) = do
+  put_ bh (IfaceHydrateDCo r ty dco rty) = do
           putByte bh 18
-          put_ bh r
-          put_ bh ty
-          put_ bh dco
-  put_ bh (IfaceHydrateDCo r ty dco (Just rty)) = do
-          putByte bh 19
           put_ bh r
           put_ bh ty
           put_ bh dco
@@ -2252,12 +2252,8 @@ instance Binary IfaceCoercion where
            18-> do r <- get bh
                    t <- get bh
                    dco <- get bh
-                   return $ IfaceHydrateDCo r t dco Nothing
-           19-> do r <- get bh
-                   t <- get bh
-                   dco <- get bh
                    rty <- get bh
-                   return $ IfaceHydrateDCo r t dco (Just rty)
+                   return $ IfaceHydrateDCo r t dco rty
            _ -> panic ("get IfaceCoercion " ++ show tag)
 
 instance Binary IfaceDCoercion where
@@ -2301,6 +2297,9 @@ instance Binary IfaceDCoercion where
           putByte bh 13
           put_ bh p
           put_ bh rhs
+  put_ bh (IfaceSubDCo dco) = do
+          putByte bh 14
+          put_ bh dco
   put_ _ (IfaceFreeCoVarDCo cv)
        = pprPanic "Can't serialise IfaceFreeCoVarDCo" (ppr cv)
           -- See Note [Holes in IfaceCoercion]
@@ -2336,6 +2335,8 @@ instance Binary IfaceDCoercion where
            13 -> do p <- get bh
                     rhs <- get bh
                     return $ IfaceUnivDCo p rhs
+           14 -> do dco <- get bh
+                    return $ IfaceSubDCo dco
            _ -> panic ("get IfaceDCoercion " ++ show tag)
 
 instance Binary iface_co => Binary (IfaceUnivCoProv iface_co) where
@@ -2432,6 +2433,7 @@ instance NFData IfaceDCoercion where
     IfaceTransDCo f1 f2 -> rnf f1 `seq` rnf f2
     IfaceDehydrateCo f1 -> rnf f1
     IfaceFreeCoVarDCo f1 -> f1 `seq` ()
+    IfaceSubDCo f1 -> f1 `seq` ()
 
 instance NFData (IfaceUnivCoProv co) where
   rnf x = seq x ()

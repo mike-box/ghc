@@ -1,6 +1,6 @@
 {-# LANGUAGE GADTs, RankNTypes, PatternSynonyms, PolyKinds, ViewPatterns, TypeOperators #-}
 
-module BinaryClass where
+module DCo_TypeRep where
 
 import Type.Reflection (SomeTypeRep(SomeTypeRep), pattern Fun, typeRepKind )
 

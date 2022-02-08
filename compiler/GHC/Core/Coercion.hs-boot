@@ -42,10 +42,11 @@ mkReflDCo :: DCoercion
 mkGReflRightDCo :: MCoercionN -> DCoercion
 mkGReflLeftDCo :: MCoercionN -> DCoercion
 mkDehydrateCo :: Coercion -> DCoercion
-mkHydrateDCo :: Role -> Type -> DCoercion -> Maybe Type -> Coercion
+mkHydrateDCo :: HasDebugCallStack => Role -> Type -> DCoercion -> Maybe Type -> Coercion
 mkCoVarDCo :: CoVar -> DCoercion
 mkUnivDCo :: UnivCoProvenance DCoercion -> Type -> DCoercion
-followDCo :: Role -> Type -> DCoercion -> Type
+mkSubDCo :: HasDebugCallStack => Type -> DCoercion -> Type -> DCoercion
+followDCo :: HasDebugCallStack => Role -> Type -> DCoercion -> Type
 
 isGReflCo :: Coercion -> Bool
 isReflCo :: Coercion -> Bool

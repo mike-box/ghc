@@ -411,6 +411,7 @@ orphNamesOfDCo StepsDCo{}                = emptyNameSet
 orphNamesOfDCo (TransDCo co1 co2)        = orphNamesOfDCo co1 `unionNameSet` orphNamesOfDCo co2
 orphNamesOfDCo (DehydrateCo co)          = orphNamesOfCo co
 orphNamesOfDCo (UnivDCo p rhs)           = orphNamesOfProv orphNamesOfDCo p `unionNameSet` orphNamesOfType rhs
+orphNamesOfDCo (SubDCo dco)              = orphNamesOfDCo dco
 
 orphNamesOfProv :: (co -> NameSet) -> UnivCoProvenance co -> NameSet
 orphNamesOfProv orph_names (PhantomProv co)    = orph_names co

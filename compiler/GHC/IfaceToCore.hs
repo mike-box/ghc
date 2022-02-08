@@ -1410,7 +1410,7 @@ tcIfaceCo = go
                                         ForAllCo tv' k' <$> go c }
     go (IfaceCoVarCo n)          = CoVarCo <$> go_var n
     go (IfaceAxiomInstCo n i cs) = AxiomInstCo <$> tcIfaceCoAxiom n <*> pure i <*> mapM go cs
-    go (IfaceHydrateDCo r t1 dco mt2)= HydrateDCo r <$> tcIfaceType t1 <*> tcIfaceDCo dco <*> traverse tcIfaceType mt2
+    go (IfaceHydrateDCo r t1 dco t2)= HydrateDCo r <$> tcIfaceType t1 <*> tcIfaceDCo dco <*> tcIfaceType t2
     go (IfaceUnivCo p r t1 t2)   = UnivCo <$> tcIfaceUnivCoProv go p <*> pure r
                                           <*> tcIfaceType t1 <*> tcIfaceType t2
     go (IfaceSymCo c)            = SymCo    <$> go c
@@ -1453,6 +1453,7 @@ tcIfaceDCo = go
                                               <*> go c2
     go (IfaceDehydrateCo co)       = DehydrateCo <$> tcIfaceCo co
     go (IfaceUnivDCo prov rhs)     = UnivDCo <$> tcIfaceUnivCoProv go prov <*> tcIfaceType rhs
+    go (IfaceSubDCo dco)           = SubDCo <$> go dco
     go (IfaceFreeCoVarDCo c)       = pprPanic "tcIfaceDCo:IfaceFreeCoVarDCo" (ppr c)
 
     go_var :: FastString -> IfL CoVar

@@ -23,8 +23,8 @@ import Control.Monad.IO.Class
 -- See Note [Simple and full coercion optimisation] in GHC.Core.Coercion.Opt.
 initOptCoercionOpts :: DynFlags -> OptCoercionOpts
 initOptCoercionOpts dflags
-  | gopt Opt_OptCoercionSimple dflags = SimpleCoercionOpt
-  | otherwise                         = NoCoercionOpt
+  | gopt Opt_OptCoercion dflags = CoercionOpt
+  | otherwise                   = NoCoercionOpt
 
 -- | Initialise Simple optimiser configuration from DynFlags
 initSimpleOpts :: DynFlags -> SimpleOpts

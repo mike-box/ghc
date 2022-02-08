@@ -388,7 +388,7 @@ unpackCoercionHole_maybe (CoercionHole { ch_ref = ref }) = readTcRef ref
 -- itself is needed only for printing.)
 -- Always returns the checked coercion, but this return value is necessary
 -- so that the input coercion is forced only when the output is forced.
-checkCoercionHole :: CoVar -> Coercion -> TcM Coercion
+checkCoercionHole :: HasDebugCallStack => CoVar -> Coercion -> TcM Coercion
 checkCoercionHole cv co
   | debugIsOn
   = do { cv_ty <- zonkTcType (varType cv)
@@ -396,8 +396,10 @@ checkCoercionHole cv co
        ; return $
          assertPpr (ok cv_ty)
                    (text "Bad coercion hole" <+>
-                    ppr cv <> colon <+> vcat [ ppr t1, ppr t2, ppr role
-                                             , ppr cv_ty ])
+                    ppr cv <> colon <+> vcat [ text "t1:" <+> ppr t1
+                                             , text "t2:" <+> ppr t2
+                                             , text "role:" <+> ppr role
+                                             , text "cv_ty:" <+> ppr cv_ty ])
          co }
   | otherwise
   = return co
@@ -1597,6 +1599,7 @@ collect_cand_qtvs_co_dco orig_ty bound dv = (go_co dv, go_dco dv)
     go_dco dv (DehydrateCo co)       = go_co dv co
     go_dco dv (UnivDCo prov rhs)     = do dv1 <- go_prov go_dco dv prov
                                           collect_cand_qtvs orig_ty True bound dv1 rhs
+    go_dco dv (SubDCo dco)           = go_dco dv dco
 
     go_mco dv MRefl    = return dv
     go_mco dv (MCo co) = go_co dv co

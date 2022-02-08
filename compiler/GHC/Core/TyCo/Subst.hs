@@ -38,6 +38,7 @@ module GHC.Core.TyCo.Subst
         substTyUnchecked, substTysUnchecked, substScaledTysUnchecked, substThetaUnchecked,
         substTyWithUnchecked, substScaledTyUnchecked,
         substCoUnchecked, substCoWithUnchecked,
+        substDCoUnchecked,
         substTyWithInScope,
         substTys, substScaledTys, substTheta,
         lookupTyVar,
@@ -875,7 +876,8 @@ subst_co_dco subst = (go, go_dco)
     go (FunCo r w co1 co2)   = ((mkFunCo r $! go w) $! go co1) $! go co2
     go (CoVarCo cv)          = substCoVar subst cv
     go (AxiomInstCo con ind cos) = mkAxiomInstCo con ind $! map go cos
-    go (HydrateDCo r ty dco mrty) = (((mkHydrateDCo $! r) $! go_ty ty) $! go_dco dco ) $! fmap go_ty mrty
+    go (HydrateDCo r ty dco rty) = (((mkHydrateDCo $! r) $! go_ty ty) $! go_dco dco ) $! Just (go_ty rty)
+      -- SLD TODO: we can either substitute the RHS or recompute it from the rest of the information.
     go (UnivCo p r t1 t2)    = (((mkUnivCo $! go_prov go p) $! r) $!
                                 (go_ty t1)) $! (go_ty t2)
     go (SymCo co)            = mkSymCo $! (go co)
@@ -906,6 +908,7 @@ subst_co_dco subst = (go, go_dco)
          (subst', tv', kind_dco') ->
           ((mkForAllDCo $! tv') $! kind_dco') $! subst_dco subst' co
     go_dco (UnivDCo prov rhs)     = (mkUnivDCo (go_prov go_dco prov)) $! go_ty rhs
+    go_dco (SubDCo dco)           = SubDCo $ go_dco dco
 
     go_prov do_subst (PhantomProv kco)    = PhantomProv $! do_subst kco
     go_prov do_subst (ProofIrrelProv kco) = ProofIrrelProv $! do_subst kco
@@ -975,6 +978,7 @@ substForAllCoTyVarBndrUsing co_or_dco sym sty sco (TCvSubst in_scope tenv cenv) 
     mk_cast = case co_or_dco of
       Co  -> CastTy
       DCo -> \ ty dco -> CastTy ty (mkHydrateDCo Nominal new_ki1 dco Nothing)
+            -- SLD TODO: Hydration invariant?
 
     no_change = no_kind_change && (new_var == old_var)
 
@@ -1019,6 +1023,7 @@ substForAllCoCoVarBndrUsing co_or_dco sym sty sco (TCvSubst in_scope tenv cenv)
       DCo ->
         let l_ty = sty (varType old_var)
             r_ty = followDCo Nominal l_ty new_kind_co
+              -- SLD TODO: Hydration invariant satisfied?
         in Pair l_ty r_ty
 
     new_var       = uniqAway in_scope $ mkCoVar (varName old_var) new_var_type

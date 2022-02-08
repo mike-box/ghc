@@ -139,7 +139,10 @@ test('T9872a',
      [''])
 
 test('T9872b',
-     normal,
+     [ only_ways(['normal']),
+       collect_compiler_stats('bytes allocated', 1),
+       high_memory_usage
+      ],
      compile_fail,
      [''])
 test('T9872b_defer',

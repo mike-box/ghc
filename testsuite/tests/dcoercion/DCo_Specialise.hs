@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module RnStmts ( rnStmts1 ) where
+module DCo_Specialise ( rnStmts1 ) where
 
 data RealWorld
 newtype M a = M (RealWorld -> a)

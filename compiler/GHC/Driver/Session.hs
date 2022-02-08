@@ -2293,16 +2293,6 @@ dynamic_flags_deps = [
         (NoArg (setGeneralFlag Opt_NoHsMain))
   , make_ord_flag defGhcFlag "fno-state-hack"
         (NoArg (setGeneralFlag Opt_G_NoStateHack))
-  , make_ord_flag defGhcFlag "fopt-coercion"
-        (NoArg (do setGeneralFlag Opt_OptCoercionSimple
-                   setGeneralFlag Opt_OptCoercionFull1
-                   setGeneralFlag Opt_OptCoercionFull2
-                   setGeneralFlag Opt_OptCoercionFull3))
-  , make_ord_flag defGhcFlag "fno-opt-coercion"
-        (NoArg (do unSetGeneralFlag Opt_OptCoercionSimple
-                   unSetGeneralFlag Opt_OptCoercionFull1
-                   unSetGeneralFlag Opt_OptCoercionFull2
-                   unSetGeneralFlag Opt_OptCoercionFull3))
   , make_ord_flag defGhcFlag "with-rtsopts"
         (HasArg setRtsOpts)
   , make_ord_flag defGhcFlag "rtsopts"
@@ -3396,7 +3386,7 @@ fFlagsDeps = [
   flagSpec "block-layout-weightless"          Opt_WeightlessBlocklayout,
   flagSpec "omit-interface-pragmas"           Opt_OmitInterfacePragmas,
   flagSpec "omit-yields"                      Opt_OmitYields,
-  flagSpec "opt-coercion-simple"              Opt_OptCoercionSimple,
+  flagSpec "opt-coercion"                     Opt_OptCoercion,
   flagSpec "optimal-applicative-do"           Opt_OptimalApplicativeDo,
   flagSpec "pedantic-bottoms"                 Opt_PedanticBottoms,
   flagSpec "pre-inlining"                     Opt_SimplPreInlining,
@@ -3956,8 +3946,7 @@ optLevelFlags -- see Note [Documenting optimisation flags]
     , ([1,2],   Opt_SolveConstantDicts)
     , ([1,2],   Opt_NumConstantFolding)
 
-    , ([0,1,2], Opt_OptCoercionSimple)
-    , ([1,2],   Opt_OptCoercionFull2)
+    , ([1,2],   Opt_OptCoercion)
 
     , ([2],     Opt_LiberateCase)
     , ([2],     Opt_SpecConstr)

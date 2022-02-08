@@ -1189,13 +1189,17 @@ data Coercion
     -- If there are any left-over coercions past the arity,
     -- we use 'AppCo' for them.
 
-  | HydrateDCo Role Type DCoercion (Maybe Type)
+  | HydrateDCo
     -- ^ Embed a directed coercion into a coercion, by specifying
     -- the LHS type and role of the directed coercion.
     --
-    -- Optionally, you may also specify the RHS type of the directed coercion.
-    -- It can be computed from the LHS type, role, and directed coercion, but
-    -- that can be expensive, especially if the directed coercion is large.
+    -- The RHS type is also cached, as we often already know the RHS,
+    -- which avoids us computing it anew using 'followDCo'.
+      Role -- ^ `r`
+      Type -- ^ `lhs`: LHS type of the directed coercion
+      DCoercion
+      Type -- ^ Cached RHS type of the directed coercion.
+           -- Can be computed from `r` and `lhs` using 'followDCo'.
 
   -- :: _ -> "e" -> _ -> _ -> e
   | UnivCo (UnivCoProvenance Coercion) Role Type Type
@@ -1242,8 +1246,6 @@ data Coercion
     -- Example: @InstCo (qco :: (forall a. bco1) ~e (forall b. bco2)) (co :: x1 ~ x2)@
     -- results in a coercion of kind @res :: bco1 [a -> x1] ~e bco2 [b -> x2]@.
 
-
-
   -- :: e -> N
   | KindCo Coercion
     -- ^ Extract a kind coercion from a (heterogeneous) type coercion
@@ -1256,7 +1258,7 @@ data Coercion
   | HoleCo CoercionHole
     -- ^ A 'CoercionHole': a mutable cell holding a coercion, used during typechecking.
     -- The typechecker fills these in, in the process of typechecking.
-    -- ^ See Note [Coercion holes]
+    -- See Note [Coercion holes]
 
   deriving Data.Data
 
@@ -1734,10 +1736,8 @@ data DCoercion
   | ForAllDCo TyCoVar KindDCoercion DCoercion
     -- ^ 'ForAllCo' for 'DCoercion'.
 
-
   | CoVarDCo CoVar
     -- ^ 'CoVarCo' for 'DCoercion'.
-
 
   | AxiomInstDCo (CoAxiom Branched)
     -- ^ 'AxiomInstCo' for 'DCoercion', but specialised
@@ -1747,7 +1747,7 @@ data DCoercion
     -- compact 'StepsDCo'.
 
   | StepsDCo !Int
-    -- @StepsDCo n@ means: \"take n successive reduction steps\",
+    -- ^ @StepsDCo n@ means: \"take n successive reduction steps\",
     -- where a reduction step could be using a closed type family equation
     -- or using a newtype axiom.
 
@@ -1759,6 +1759,9 @@ data DCoercion
 
   | TransDCo DCoercion DCoercion
     -- ^ 'TransCo' for 'DCoercion'.
+
+  | SubDCo DCoercion
+    -- ^ 'SubCo' for 'DCoercion'.
 
   | DehydrateCo Coercion
   -- ^ Embed a coercion inside a directed coercion, e.g. \"forget\"
@@ -2121,7 +2124,7 @@ foldTyCo (TyCoFolder { tcf_view       = view
     go_co env (CoVarCo cv)            = covar env cv
     go_co env (AxiomInstCo _ _ args)  = go_cos env args
     go_co env (HoleCo hole)           = cohole env hole
-    go_co env (HydrateDCo _ t1 dco mt2)= go_ty env t1 `mappend` go_dco env dco `mappend` maybe mempty (go_ty env) mt2
+    go_co env (HydrateDCo _ t1 dco _t2)= go_ty env t1 `mappend` go_dco env dco
     go_co env (UnivCo p _ t1 t2)      = go_prov (go_co env) p
                                           `mappend` go_ty env t1
                                           `mappend` go_ty env t2
@@ -2153,6 +2156,7 @@ foldTyCo (TyCoFolder { tcf_view       = view
     go_dco _   AxiomInstDCo{}           = mempty
     go_dco _   StepsDCo{}               = mempty
     go_dco env (TransDCo c1 c2)         = go_dco env c1 `mappend` go_dco env c2
+    go_dco env (SubDCo dco)             = go_dco env dco
     go_dco env (DehydrateCo co)         = go_co env co
     go_dco env (ForAllDCo tv kind_dco co)
       = go_dco env kind_dco `mappend` go_ty env (varType tv)
@@ -2207,7 +2211,7 @@ coercionSize (FunCo _ w co1 co2) = 1 + coercionSize co1 + coercionSize co2
 coercionSize (CoVarCo _)         = 1
 coercionSize (HoleCo _)          = 1
 coercionSize (AxiomInstCo _ _ args) = 1 + sum (map coercionSize args)
-coercionSize (HydrateDCo _ t1 dco mt2) = 1 + typeSize t1 + dcoercionSize dco + maybe 0 typeSize mt2
+coercionSize (HydrateDCo _ t1 dco t2) = 1 + typeSize t1 + dcoercionSize dco + typeSize t2
 coercionSize (UnivCo p _ t1 t2)  = 1 + provSize coercionSize p + typeSize t1 + typeSize t2
 coercionSize (SymCo co)          = 1 + coercionSize co
 coercionSize (TransCo co1 co2)   = 1 + coercionSize co1 + coercionSize co2
@@ -2231,6 +2235,7 @@ dcoercionSize (CoVarDCo _)             = 1
 dcoercionSize AxiomInstDCo{}           = 1
 dcoercionSize StepsDCo{}               = 1
 dcoercionSize (TransDCo co1 co2)       = 1 + dcoercionSize co1 + dcoercionSize co2
+dcoercionSize (SubDCo co)              = 1 + dcoercionSize co
 dcoercionSize (DehydrateCo co)         = 1 + coercionSize co
 dcoercionSize (UnivDCo prov rhs)       = 1 + provSize dcoercionSize prov + typeSize rhs
 

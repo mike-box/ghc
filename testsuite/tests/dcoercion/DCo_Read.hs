@@ -1,6 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude, ScopedTypeVariables #-}
 
-module Read where
+module DCo_Read where
 
 import Text.ParserCombinators.ReadP
   ( ReadS

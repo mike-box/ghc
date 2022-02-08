@@ -12,7 +12,7 @@
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
 
-module Data.Type.Equality where
+module DCo_Hetero where
 
 import GHC.Enum
 import GHC.Base

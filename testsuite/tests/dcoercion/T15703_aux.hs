@@ -11,7 +11,7 @@
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-module T15703aux where
+module T15703_aux where
 
 import Data.Kind
 import Data.Type.Equality
@@ -73,7 +73,7 @@ type instance Apply IdSym0 x = Id x
 sId :: forall a (x :: a). Sing x -> Sing (Id x)
 sId x = x
 
-data instance Sing :: forall k c (p :: k). K1 i c p -> Type where
+data instance Sing :: forall i k c (p :: k). K1 i c p -> Type where
   SK1 :: Sing x -> Sing ('K1 x)
 
 data instance Sing :: forall k i (c :: Meta) (f :: k -> Type) (p :: k).

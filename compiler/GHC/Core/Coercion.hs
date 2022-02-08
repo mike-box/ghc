@@ -21,7 +21,8 @@ module GHC.Core.Coercion (
         Role(..), ltRole,
 
         -- ** Functions over coercions
-        coVarTypes, coVarKind, coVarKindsTypesRole, coVarRole,
+        coVarTypes, coVarLType, coVarRType,
+        coVarKind, coVarKindsTypesRole, coVarRole,
         coercionType, mkCoercionType,
         coercionKind, coercionLKind, coercionRKind,coercionKinds,
         coercionRole, coercionKindRole,
@@ -59,10 +60,12 @@ module GHC.Core.Coercion (
         mkCoherenceRightDCo,
         mkTransDCo, mkHydrateDCo,
         followDCo, fullyHydrateDCo,
+        expandDCo, expandAxiomInstDCo, expandOneStepDCo,
         mkDehydrateCo,
         mkCoVarDCo,
         castDCoercionKind1, castDCoercionKind2,
         mkUnivDCo, mkProofIrrelDCo,
+        mkSubDCo,
 
         mkHeteroCoercionType,
         mkPrimEqPred, mkReprPrimEqPred, mkPrimEqPredRole,
@@ -81,6 +84,7 @@ module GHC.Core.Coercion (
         splitFunCo_maybe,
         splitForAllCo_maybe,
         splitForAllCo_ty_maybe, splitForAllCo_co_maybe,
+        splitForAllDCo_ty_maybe, splitForAllDCo_co_maybe,
 
         nthRole, tyConRolesX, tyConRolesRepresentational, setNominalRole_maybe,
 
@@ -94,7 +98,7 @@ module GHC.Core.Coercion (
         mkHomoForAllMCo, mkFunResMCo, mkPiMCos,
         isReflMCo, checkReflexiveMCo,
 
-        isReflDCo,
+        isReflDCo, isReflexiveDCo,
 
         -- ** Coercion variables
         mkCoVar, isCoVar, coVarName, setCoVarName, setCoVarUnique,
@@ -144,6 +148,7 @@ module GHC.Core.Coercion (
         promoteCoercion, buildCoercion,
 
         downgradeRole_maybe,
+        downgradeDCoToRepresentational,
 
         multToCo,
 
@@ -185,6 +190,7 @@ import GHC.Data.Maybe
 import GHC.Types.Unique.FM
 import GHC.Types.Unique.Set
 
+import GHC.Utils.Constants (debugIsOn)
 import GHC.Utils.Monad
 import GHC.Utils.Misc
 import GHC.Utils.Outputable
@@ -193,8 +199,11 @@ import GHC.Utils.Panic.Plain
 
 import Control.Monad (foldM, zipWithM)
 import Data.Function ( on )
+import Data.Functor.Identity (Identity(runIdentity))
+import Data.List ( zipWith4 )
 import Data.Char( isDigit )
 import qualified Data.Monoid as Monoid
+import System.IO.Unsafe (unsafePerformIO)
 
 {-
 %************************************************************************
@@ -616,6 +625,18 @@ splitForAllCo_co_maybe (ForAllCo cv k_co co)
   | isCoVar cv = Just (cv, k_co, co)
 splitForAllCo_co_maybe _ = Nothing
 
+-- | Like 'splitForAllCo_maybe', but only returns Just for tyvar binder
+splitForAllDCo_ty_maybe :: DCoercion -> Maybe (TyVar, DCoercion, DCoercion)
+splitForAllDCo_ty_maybe (ForAllDCo tv k_dco dco)
+  | isTyVar tv = Just (tv, k_dco, dco)
+splitForAllDCo_ty_maybe _ = Nothing
+
+-- | Like 'splitForAllCo_maybe', but only returns Just for covar binder
+splitForAllDCo_co_maybe :: DCoercion -> Maybe (CoVar, DCoercion, DCoercion)
+splitForAllDCo_co_maybe (ForAllDCo cv k_dco dco)
+  | isCoVar cv = Just (cv, k_dco, dco)
+splitForAllDCo_co_maybe _ = Nothing
+
 -------------------------------------------------------
 -- and some coercion kind stuff
 
@@ -638,7 +659,7 @@ coVarKindsTypesRole cv
 
 coVarKind :: CoVar -> Type
 coVarKind cv
-  = assert (isCoVar cv )
+  = assert (isCoVar cv)
     varType cv
 
 coVarRole :: CoVar -> Role
@@ -682,6 +703,7 @@ isReflCoVar_maybe cv
 isGReflCo :: Coercion -> Bool
 isGReflCo (GRefl{}) = True
 isGReflCo (Refl{})  = True -- Refl ty == GRefl N ty MRefl
+isGReflCo (HydrateDCo _ _ dco _) = isGReflDCo dco
 isGReflCo _         = False
 
 -- | Tests if this coercion is obviously reflexive. Guaranteed to work
@@ -690,6 +712,7 @@ isGReflCo _         = False
 isReflCo :: Coercion -> Bool
 isReflCo (Refl{}) = True
 isReflCo (GRefl _ _ mco) | isGReflMCo mco = True
+isReflCo (HydrateDCo _ _ dco _) = isReflDCo dco
 isReflCo _ = False
 
 -- | Returns the type coerced if this coercion is a generalized reflexive
@@ -697,6 +720,9 @@ isReflCo _ = False
 isGReflCo_maybe :: Coercion -> Maybe (Type, Role)
 isGReflCo_maybe (GRefl r ty _) = Just (ty, r)
 isGReflCo_maybe (Refl ty)      = Just (ty, Nominal)
+isGReflCo_maybe (HydrateDCo r ty dco _)
+  | isGReflDCo dco
+  = Just (ty, r)
 isGReflCo_maybe _ = Nothing
 
 -- | Returns the type coerced if this coercion is reflexive. Guaranteed
@@ -705,6 +731,9 @@ isGReflCo_maybe _ = Nothing
 isReflCo_maybe :: Coercion -> Maybe (Type, Role)
 isReflCo_maybe (Refl ty) = Just (ty, Nominal)
 isReflCo_maybe (GRefl r ty mco) | isGReflMCo mco = Just (ty, r)
+isReflCo_maybe (HydrateDCo r ty dco _)
+  | isReflDCo dco
+  = Just (ty, r)
 isReflCo_maybe _ = Nothing
 
 -- | Slowly checks if the coercion is reflexive. Don't call this in a loop,
@@ -715,26 +744,35 @@ isReflexiveCo = isJust . isReflexiveCo_maybe
 -- | Extracts the coerced type from a reflexive coercion. This potentially
 -- walks over the entire coercion, so avoid doing this in a loop.
 isReflexiveCo_maybe :: Coercion -> Maybe (Type, Role)
-isReflexiveCo_maybe (Refl ty) = Just (ty, Nominal)
-isReflexiveCo_maybe (GRefl r ty mco) | isGReflMCo mco = Just (ty, r)
 isReflexiveCo_maybe co
+  | Just res <- isReflCo_maybe co
+  = Just res
   | ty1 `eqType` ty2
   = Just (ty1, r)
   | otherwise
   = Nothing
   where (Pair ty1 ty2, r) = coercionKindRole co
 
-
 isReflDCo :: DCoercion -> Bool
-isReflDCo ReflDCo = True
-isReflDCo _       = False
+isReflDCo ReflDCo              = True
+isReflDCo (GReflRightDCo mco)  = isGReflMCo mco
+isReflDCo (GReflLeftDCo  mco)  = isGReflMCo mco
+isReflDCo (DehydrateCo co)     = isReflCo co
+isReflDCo _                    = False
 
 isGReflDCo :: DCoercion -> Bool
 isGReflDCo ReflDCo            = True
 isGReflDCo (GReflRightDCo {}) = True
 isGReflDCo (GReflLeftDCo {})  = True
+isGReflDCo (DehydrateCo co)   = isGReflCo co
 isGReflDCo _                  = False
 
+isReflexiveDCo :: Role -> Type -> DCoercion -> Bool
+isReflexiveDCo r l_ty dco
+  | isReflDCo dco
+  = True
+  | otherwise
+  = l_ty `eqType` followDCo r l_ty dco
 
 {-
 %************************************************************************
@@ -881,8 +919,6 @@ mkAppCos :: Coercion
          -> Coercion
 mkAppCos co1 cos = foldl' mkAppCo co1 cos
 
-
-
 mkReflDCo :: DCoercion
 mkReflDCo = ReflDCo
 
@@ -890,6 +926,23 @@ mkTyConAppDCo :: [DCoercion] -> DCoercion
 mkTyConAppDCo cos
   | all isReflDCo cos = mkReflDCo -- See Note [Refl invariant]
   | otherwise         = TyConAppDCo cos
+
+mkSubDCo :: HasDebugCallStack
+         => Type      -- ^ LHS type
+         -> DCoercion
+         -> Type      -- ^ RHS type
+         -> DCoercion
+mkSubDCo l_ty dco r_ty = case dco of
+  ReflDCo  -> GReflRightDCo MRefl
+  GReflRightDCo mco -> GReflRightDCo mco
+  GReflLeftDCo  mco -> GReflLeftDCo  mco
+  TyConAppDCo dcos
+    | Just (tc, arg_l_tys) <- splitTyConApp_maybe l_ty
+    , Just (_ , arg_r_tys) <- splitTyConApp_maybe r_ty
+    -> TyConAppDCo (applyRoles_dco tc arg_l_tys dcos arg_r_tys)
+  DehydrateCo co
+    -> DehydrateCo (mkSubCo co)
+  _ -> SubDCo dco
 
 -- | Like 'mkTyConAppDCo', but specialised to the function arrow.
 --
@@ -931,6 +984,7 @@ mkTransDCo dco1 dco2
   = dco2
   | isReflDCo dco2
   = dco1
+-- SLD TODO: GRefl cases?
 mkTransDCo (StepsDCo n) (StepsDCo m)
   = StepsDCo (n+m)
 mkTransDCo dco1 dco2
@@ -1058,19 +1112,54 @@ See Note [The Reduction type] in GHC.Core.Reduction.
 --
 -- NB: the LHS type must uphold the invariant of Note [The Hydration invariant]:
 -- it must be sufficiently zonked for the structure of the directed coercion to be visible.
-mkHydrateDCo :: Role -> Type -> DCoercion -> Maybe Type -> Coercion
-mkHydrateDCo r ty ReflDCo          _    = mkReflCo r ty
-mkHydrateDCo _ _  (CoVarDCo cv)    _    = CoVarCo cv
-mkHydrateDCo r _  (DehydrateCo co) _    = fromMaybe co (downgradeRole_maybe r (coercionRole co) co)
-mkHydrateDCo r ty dco              mrty = HydrateDCo r ty dco mrty
+mkHydrateDCo :: HasDebugCallStack => Role -> Type -> DCoercion -> Maybe Type -> Coercion
+mkHydrateDCo r l_ty dco mb_r_ty
+  | debugIsOn
+  -- Check that 'followDCo' does not crash,
+  -- i.e. that the Hydration invariant is satisfied.
+  = check_hydration_invariant r l_ty dco $
+    go r l_ty dco mb_r_ty
+  | otherwise
+  = go r l_ty dco mb_r_ty
+  where
+    go r ty dco _mb_rty =
+      case dco of
+        ReflDCo        -> mkReflCo r ty
+        CoVarDCo cv    -> CoVarCo cv
+        DehydrateCo co -> let co_r = coercionRole co in
+                          assertPpr (r == co_r)
+                            (vcat [ text "mkHydrateCo: role mismatch"
+                                  , text "Expected:" <+> ppr r
+                                  , text "  Actual:" <+> ppr co_r ])
+                        $ co
+        _ -> HydrateDCo r ty dco (fromMaybe (followDCo r ty dco) mb_r_ty)
 
-fullyHydrateDCo :: Role -> Type -> DCoercion -> Coercion
+-- | Check that the calling 'followDCo' with the provided arguments
+-- does not crash.
+check_hydration_invariant :: HasDebugCallStack => Role -> Type -> DCoercion -> r -> r
+check_hydration_invariant r l_ty dco a =
+  unsafePerformIO $
+    handleGhcException handler
+    (rhs `seq` return a)
+
+  where
+    rhs = followDCo r l_ty dco
+    handler (PprPanic str err) =
+      pprPanic "mkHydrateDCo: Hydration invariant failure" $
+        vcat [ text "r:" <+> ppr r
+             , text "l_ty:" <+> ppr l_ty
+             , text "dco:" <+> ppr dco ]
+        $$ hang (text "original error:")
+            4 (text str $$ err)
+    handler e = throwGhcException e
+
+fullyHydrateDCo :: HasDebugCallStack => Role -> Type -> DCoercion -> Coercion
 fullyHydrateDCo r ty dco = fst $ expandDCo r ty dco
 
-followDCo :: Role -> Type -> DCoercion -> Type
+followDCo :: HasDebugCallStack => Role -> Type -> DCoercion -> Type
 followDCo r ty dco = snd $ expandDCo r ty dco
 
-expandDCo :: Role -> Type -> DCoercion -> (Coercion, Type)
+expandDCo :: HasDebugCallStack => Role -> Type -> DCoercion -> (Coercion, Type)
 expandDCo r ty dco
   | Just ty' <- tcView ty
   = expandDCo r ty' dco
@@ -1083,15 +1172,19 @@ expandDCo r l_ty (GReflRightDCo mco)
   = (co, coercionRKind co)
 
 expandDCo r l_ty (GReflLeftDCo mco)
-  | let co = mkGReflCo r l_ty mco
-  = (mkSymCo co, coercionLKind co)
+  | let co = mkGReflCo r l_ty (mkSymMCo mco)
+  -- N.B.: mkSymCo (mkGReflCo r l_ty mco) would be wrong,
+  -- because the LHS type of mco would not be the kind of l_ty.
+  = (co, coercionRKind co)
 
-expandDCo r l_ty (TyConAppDCo dcos)
+expandDCo r l_ty dco@(TyConAppDCo dcos)
   | Just (tc, l_tys) <- splitTyConApp_maybe l_ty
   , let (cos, tys) = unzip $ expandDCos (tyConRolesX r tc) l_tys dcos
   = (mkTyConAppCo r tc cos, mkTyConApp tc tys)
   | otherwise
-  = pprPanic "expandDCo" (text "TyConAppDCo where type is not a TyCon:" <+> ppr l_ty)
+  = pprPanic "expandDCo" (vcat [ text "TyConAppDCo where type is not a TyCon:"
+                               , text "l_ty:" <+> ppr l_ty
+                               , text "dco:" <+> ppr dco ])
 
 expandDCo r l_ty (AppDCo dco1 dco2)
   | Just (l_ty1, l_ty2) <- splitAppTy_maybe l_ty
@@ -1117,85 +1210,25 @@ expandDCo r l_ty co@(ForAllDCo tcv kco body_dco)
           ,mkForAllTy tv af rhs_ty)
       _ -> pprPanic "expandDCo" (text "ForAllDCo where type is not a ForAllTy: " <+> ppr l_ty <+> ppr co)
 
-expandDCo r _ (CoVarDCo v)
-  = change_role_to r (CoVarCo v)
+expandDCo r _ (CoVarDCo cv)
+  = let cv_r = coVarRole cv in
+    assertPpr (r == cv_r)
+      (vcat [ text "expandDCo: wrong role"
+            , text "Expected:" <+> ppr r
+            , text "  Actual:" <+> ppr cv_r
+            , text "cv:" <+> ppr cv ])
+      (CoVarCo cv, coVarRType cv)
 
-expandDCo r l_ty dco@(AxiomInstDCo ax)
-  | r == Phantom
-  = expandDCo Representational l_ty dco
-     -- AMG TODO: think about better fix to the above;
-     -- role could be Phantom because the coercion was downgraded,
-     -- maybe change the following to check role <= rather than exact matches
-
-  | Just (tc, tys) <- splitTyConApp_maybe l_ty
-  , case r of
-      Representational -> isOpenFamilyTyCon     tc
-      _                -> isOpenTypeFamilyTyCon tc
-  , coAxiomTyCon ax == tc
-  , let ax' = toUnbranchedAxiom ax
-  , let branch = coAxiomSingleBranch ax'
-  , Just subst <- tcMatchTys (coAxBranchLHS branch) tys
-  , let inst_tys = substTyVars subst (coAxBranchTyVars branch) -- AMG TODO: need to handle oversaturation here?
-  , let inst_cos = substCoVars subst (coAxBranchCoVars branch)
-  , let co = mkUnbranchedAxInstCo r ax' inst_tys inst_cos
-  = (co, coercionRKind co)
-
-  -- AMG TODO: don't need the ax/ind for this case after all?
-  -- have different evidence for open TFs (store a CoAxiom Unbranched),
-  -- closed TFs/newtypes (no need to store anything)
-  | Just (tc, tys) <- splitTyConApp_maybe l_ty
-  , Just ax' <- isClosedSynFamilyTyConWithAxiom_maybe tc
-  , ax == ax'
-  , Just (ind, inst_tys, inst_cos) <- chooseBranch ax tys
-  , let co = mkAxInstCo r ax ind inst_tys inst_cos
-  = (co, coercionRKind co)
-
-  -- AMG TODO: drop this case?
-  | Just (tc, tys) <- splitTyConApp_maybe l_ty
-  , Just (ty, co) <- instNewTyCon_maybe tc tys
-  , r == Representational
-  = (co, ty)
-
-  | otherwise
-  = pprPanic "expandDCo" (text "Bad AxiomInstDCo: " <+> ppr r <+> ppr l_ty <+> ppr dco)
+expandDCo r l_ty (AxiomInstDCo ax)
+  = runIdentity $ expandAxiomInstDCo assertPpr (pprPanic "expandDCo") r l_ty ax
 
 expandDCo r l_ty (StepsDCo 0)
   = (mkReflCo r l_ty, l_ty)
 
--- AMG TODO: factor out a function to check StepsDCo...
-expandDCo r l_ty dco@(StepsDCo n)
-  | Just (tc, tys) <- splitTyConApp_maybe l_ty
-  , Just ax <- isClosedSynFamilyTyConWithAxiom_maybe tc
-  , Just (ind, inst_tys, inst_cos) <- chooseBranch ax tys
-  , let
-     co = mkAxInstCo r ax ind inst_tys inst_cos
-     ty = coercionRKind co
-     (co', ty') = expandDCo r ty (StepsDCo (n-1))
-  = (co `mkTransCo` co', ty')
-
-  -- AMG TODO: drop this case?
-  | Just (tc, tys) <- splitTyConApp_maybe l_ty
-  , Just (ty, co) <- instNewTyCon_maybe tc tys
-  , r == Representational
-  , let (co', ty') = expandDCo r ty (StepsDCo (n-1))
-  = (co `mkTransCo` co', ty')
-
-  | Just (tc, tys) <- splitTyConApp_maybe l_ty
-  , Just sf <- isBuiltInSynFamTyCon_maybe tc
-  , Just (ax, ts, ty) <- sfMatchFam sf tys
-  , r == coaxrRole ax
-  , let
-      co = mkAxiomRuleCo ax (zipWith mkReflCo (coaxrAsmpRoles ax) ts)
-      (co', ty') = expandDCo r ty (StepsDCo (n-1))
-    -- AMG TODO: deduplicate with reduceTyFamApp_maybe?
-  = (co `mkTransCo` co', ty')
-
-  | otherwise
-  = pprPanic "expandDCo: Bad StepsDCo" $ vcat
-     [text "role:" <+> ppr r
-     ,text "l_ty:" <+> ppr l_ty
-     ,text "dco:"  <+> ppr dco
-     ]
+expandDCo r l_ty (StepsDCo n)
+  = let (co, ty) = runIdentity $ expandOneStepDCo assertPpr (pprPanic "expandDCo") r l_ty
+        (co', ty') = expandDCo r ty (StepsDCo (n-1))
+    in (co `mkTransCo` co', ty')
 
 expandDCo r l_ty (TransDCo dco1 dco2)
   = let
@@ -1204,13 +1237,134 @@ expandDCo r l_ty (TransDCo dco1 dco2)
     in
       (TransCo co1 co2, ty2)
 
+expandDCo r l_ty (SubDCo dco)
+  = assert (r == Representational)
+  $ case expandDCo Nominal l_ty dco of
+      (co, rhs) -> (mkSubCo co, rhs)
+
 expandDCo r _ (DehydrateCo co)
-  = change_role_to r co
+  = let co_r = coercionRole co in
+    assertPpr (r == co_r)
+      (vcat [ text "expandDCo: wrong role"
+            , text "Expected:" <+> ppr r
+            , text "  Actual:" <+> ppr co_r
+            , text "co:" <+> ppr co ])
+      (co, coercionRKind co)
 
 expandDCo r l_ty (UnivDCo prov r_ty)
   = (UnivCo (expandProv r l_ty prov) r l_ty r_ty, r_ty)
 
-expandProv :: Role -> Type -> UnivCoProvenance DCoercion -> UnivCoProvenance Coercion
+-- | Expand an 'AxiomInstDCo' directed coercion by matching on an open type
+-- or data family instance. (Use 'expandOneStepDCo' for closed type families).
+--
+-- This function is used in both 'expandDCo' (which panics on failure)
+-- and in 'GHC.Core.Lint.lintDCoercion' (which errors in the 'LintM' monad).
+expandAxiomInstDCo :: (HasDebugCallStack, Applicative m)
+                   => (Bool -> SDoc -> m (Coercion, Type) -> m (Coercion, Type))
+                      -- ^ How to check assertions in @m@
+                   -> (SDoc -> m (Coercion, Type))
+                      -- ^ How to throw hard errors in @m@
+                   -> Role -- ^ input role for expansion
+                   -> Type -- ^ input LHS type for expansion
+                   -> CoAxiom Branched -- ^ axiom to use
+                   -> m (Coercion, Type)
+expandAxiomInstDCo check_prop throw_err r l_ty ax
+  | r == Phantom
+  = expandAxiomInstDCo check_prop throw_err Representational l_ty ax
+     -- AMG TODO: think about better fix to the above;
+     -- role could be Phantom because the coercion was downgraded,
+     -- maybe change the following to check role <= rather than exact matches
+
+  | otherwise
+  = case splitTyConApp_maybe l_ty of
+      Just (tc, tys)
+        | let (match_tys, other_tys) = splitAtList ax_lhs $ (map (\ x -> fromMaybe x $ tcView x) tys)
+              debug_info2 = debug_info $$
+                            text "match_tys:" <+> ppr match_tys $$
+                            text "other_tys:" <+> ppr other_tys
+        ->
+        case tcMatchTys ax_lhs match_tys of
+          Just subst ->
+            let inst_tys = substTyVars subst (coAxBranchTyVars branch) `chkAppend` other_tys
+                inst_cos = substCoVars subst (coAxBranchCoVars branch)
+                co = mkUnbranchedAxInstCo r ax' inst_tys inst_cos
+            in check_prop (tc_is_ok tc) (text "AxiomInstDCo: incorrect TyCon for Axiom" $$ debug_info2) $
+               pure (co, coercionRKind co)
+          Nothing ->
+            throw_err (text "AxiomInstDCo: couldn't match axiom" $$ debug_info2)
+      Nothing ->
+        throw_err (text "AxiomInstDCo: lhs not a TyConApp" $$ debug_info)
+  where
+    ax' = toUnbranchedAxiom ax
+    branch = coAxiomSingleBranch ax'
+    ax_lhs = coAxBranchLHS branch
+    tc_is_ok tc = coAxiomTyCon ax == tc &&
+                  case r of
+                    Representational -> isOpenFamilyTyCon     tc
+                    _                -> isOpenTypeFamilyTyCon tc
+    debug_info = vcat [ text "ax:" <+> ppr ax
+                      , text "ax_lhs:" <+> ppr ax_lhs ]
+
+-- | Expand a @StepsDCo 1@ directed coercion by taking a single reduction step,
+-- matching on closed type family equations (and built-in type families), or
+-- unwrapping newtypes (not including data family newtype instances).
+-- (Use 'expandAxiomInstDCo' for open family axioms.)
+--
+-- This function is used in both 'expandDCo' (which panics on failure)
+-- and in 'GHC.Core.Lint.lintDCoercion' (which errors in the 'LintM' monad).
+expandOneStepDCo :: (HasDebugCallStack, Applicative m)
+                 => (Bool -> SDoc -> m (Coercion, Type) -> m (Coercion, Type))
+                      -- ^ How to check assertions in @m@
+                 -> (SDoc -> m (Coercion, Type))
+                      -- ^ How to throw hard errors in @m@
+                 -> Role -- ^ input role for expansion
+                 -> Type -- ^ input LHS type for expansion
+                 -> m (Coercion, Type)
+expandOneStepDCo check_prop throw_err r l_ty
+  = case splitTyConApp_maybe l_ty of
+      Just (tc,tys)
+        -- Closed type family axioms.
+        | Just ax <- isClosedSynFamilyTyConWithAxiom_maybe tc
+        -> case chooseBranch ax tys of
+          Just (ind, inst_tys, inst_cos) ->
+            let
+              co = mkAxInstCo r ax ind inst_tys inst_cos
+              ty = coercionRKind co
+            in pure (co, ty)
+          Nothing ->
+            throw_err
+              (text "StepsDCo: couldn't choose branch" $$ debug_info2 $$ (text "ax:" <+> ppr ax))
+
+        -- Newtype axioms.
+        | Just (ty, co) <- instNewTyCon_maybe tc tys
+        , r == Representational
+        -> pure (co, ty)
+
+        -- Built-in type family axioms.
+        | Just sf <- isBuiltInSynFamTyCon_maybe tc
+        -> case sfMatchFam sf tys of
+             Just (ax, ts, ty) ->
+               let co = mkAxiomRuleCo ax (zipWith mkReflCo (coaxrAsmpRoles ax) ts)
+               in check_prop (r == coaxrRole ax)
+                    (text "StepsDCo: axiom role mismatch" $$ debug_info2 $$ (text "ax:" <+> ppr ax))
+                $ pure (co, ty)
+             Nothing ->
+               throw_err (text "StepsDCo: couldn't match built-in axiom" $$ debug_info2)
+
+        -- Couldn't find any axiom associated to this TyCon.
+        | otherwise
+        -> throw_err (text "StepsDCo: no axiom to use" $$ debug_info2 $$ (text "tc:" <+> ppr tc))
+        where
+          debug_info2 = debug_info $$ (text "tys:" <+> ppr tys)
+
+      -- LHS type is not a TyConApp.
+      Nothing ->
+        throw_err (text"StepsDCo: LHS not a TyConApp" $$ debug_info)
+  where
+    debug_info = vcat [ text "r:" <+> ppr r
+                      , text "l_ty:" <+> ppr l_ty ]
+
+expandProv :: HasDebugCallStack => Role -> Type -> UnivCoProvenance DCoercion -> UnivCoProvenance Coercion
 expandProv r l_ty (PhantomProv dco)
   = assertPpr (r == Phantom) (text "expandProv PhantomProv")
   $ PhantomProv (fullyHydrateDCo r l_ty dco)
@@ -1222,15 +1376,7 @@ expandProv _ _ (PluginProv str)
 expandProv _ _ (CorePrepProv homo)
   = CorePrepProv homo
 
--- | Utility function used in 'expandDCo' to downgrade the role of a
--- coercion, or return the original coercion if that isn't possible.
-change_role_to :: Role -> Coercion -> (Coercion, Type)
--- SLD TODO: can we get rid of this?
-change_role_to role co0 =
-  let co = fromMaybe co0 (downgradeRole_maybe role (coercionRole co0) co0)
-  in (co, coercionRKind co)
-
-expandDCos :: [Role] -> [Type] -> [DCoercion] -> [(Coercion, Type)]
+expandDCos :: HasDebugCallStack => [Role] -> [Type] -> [DCoercion] -> [(Coercion, Type)]
 expandDCos rs tys dcos =
   -- Not zipWith3Equal because the TyCon might not be fully applied
   zipWith3 expandDCo rs tys dcos
@@ -1241,9 +1387,15 @@ mkDehydrateCo (SymCo (GRefl _ _ mco))
                                      = mkGReflLeftDCo  mco
 mkDehydrateCo (GRefl _ _ mco)        = mkGReflRightDCo mco
 mkDehydrateCo (HydrateDCo _ _ dco _) = dco
+--mkDehydrateCo (TyConAppCo _ _ cos)
+--  = mkTyConAppDCo $ map mkDehydrateCo cos
+--mkDehydrateCo (AppCo co1 co2)
+--  = mkAppDCo (mkDehydrateCo co1) (mkDehydrateCo co2)
+--mkDehydrateCo (ForAllCo tcv kind body)
+--  = mkForAllDCo tcv (mkDehydrateCo kind) (mkDehydrateCo body)
 mkDehydrateCo (AxiomInstCo coax _branch cos)
   | all isReflCo cos -- AMG TODO: can we avoid the need for this check?
-  , isOpenFamilyTyCon (coAxiomTyCon coax)  -- AMG TODO: need data families here or not?
+  , isOpenFamilyTyCon (coAxiomTyCon coax)
   = AxiomInstDCo coax
   | all isReflCo cos
   = singleStepDCo
@@ -1252,10 +1404,12 @@ mkDehydrateCo (AxiomRuleCo _coax cos)
   = singleStepDCo
 mkDehydrateCo (CoVarCo cv)
   = CoVarDCo cv
+mkDehydrateCo (SubCo co)
+  = mkSubDCo (coercionLKind co) (mkDehydrateCo co) (coercionRKind co)
+--mkDehydrateCo (TransCo co1 co2)
+--  = mkTransDCo (mkDehydrateCo co1) (mkDehydrateCo co2)
 mkDehydrateCo co
   = DehydrateCo co
--- N.B. We don't have an equation "mkDehydrateCo (SubCo co) = mkDehydrateCo co",
--- as that would lose information, causing problems if we have to rehydrate.
 
 singleStepDCo :: DCoercion
 singleStepDCo = StepsDCo 1
@@ -1497,6 +1651,8 @@ mkSymCo :: Coercion -> Coercion
 mkSymCo co | isReflCo co          = co
 mkSymCo    (SymCo co)             = co
 mkSymCo    (SubCo (SymCo co))     = SubCo co
+mkSymCo    (HydrateDCo r l_ty (GReflLeftDCo  mco) r_ty) = HydrateDCo r r_ty (GReflRightDCo mco) l_ty
+mkSymCo    (HydrateDCo r l_ty (GReflRightDCo mco) r_ty) = HydrateDCo r r_ty (GReflLeftDCo  mco) l_ty
 mkSymCo co                        = SymCo co
 
 -- | Create a new 'Coercion' by composing the two given 'Coercion's transitively.
@@ -1506,7 +1662,10 @@ mkTransCo co1 co2 | isReflCo co1 = co2
                   | isReflCo co2 = co1
 mkTransCo (GRefl r t1 (MCo co1)) (GRefl _ _ (MCo co2))
   = GRefl r t1 (MCo $ mkTransCo co1 co2)
-mkTransCo co1 co2                = TransCo co1 co2
+mkTransCo (HydrateDCo r lhs dco1 _) (HydrateDCo _ _ dco2 rhs)
+  = mkHydrateDCo r lhs (mkTransDCo dco1 dco2) (Just rhs)
+mkTransCo co1 co2
+  = TransCo co1 co2
 
 mkNthCo :: HasDebugCallStack
         => Role  -- The role of the coercion you're creating
@@ -1549,19 +1708,39 @@ mkNthCo r n co
       -- If co :: (forall a1:t1 ~ t2. t1) ~ (forall a2:t3 ~ t4. t2)
       -- then (nth 0 co :: (t1 ~ t2) ~N (t3 ~ t4))
 
+    go 0 (HydrateDCo _ _ (ForAllDCo tv kind_co _) _)
+      = assert (r == Nominal) $
+        mkHydrateDCo Nominal (tyVarKind tv) kind_co Nothing
+
     go n (FunCo _ w arg res)
       = mkNthCoFunCo n w arg res
 
-    go n (TyConAppCo r0 tc arg_cos) = assertPpr (r == nthRole r0 tc n)
-                                                  (vcat [ ppr tc
-                                                        , ppr arg_cos
-                                                        , ppr r0
-                                                        , ppr n
-                                                        , ppr r ]) $
-                                             arg_cos `getNth` n
+    go n (TyConAppCo r0 tc arg_cos) =
+      assertPpr (r == nthRole r0 tc n)
+        (vcat [ text "tc:" <+> ppr tc
+              , text "arg_cos:" <+> ppr arg_cos
+              , text "r0:" <+> ppr r0
+              , text "n:" <+> ppr n
+              , text "r:" <+> ppr r ]) $
+        arg_cos `getNth` n
 
     go n (SymCo co)  -- Recurse, hoping to get to a TyConAppCo or FunCo
       = mkSymCo (go n co)
+
+    go n (HydrateDCo r0 l_ty (TyConAppDCo arg_dcos) r_ty)
+      | Just (tc, arg_tys) <- splitTyConApp_maybe l_ty
+      , Just (_, rhs_tys) <- splitTyConApp_maybe r_ty
+      = assertPpr (r == nthRole r0 tc n)
+        (vcat [ text "tc:" <+> ppr tc
+              , text "arg_dcos:" <+> ppr arg_dcos
+              , text "r0:" <+> ppr r0
+              , text "n:" <+> ppr n
+              , text "r:" <+> ppr r ]) $
+        mkHydrateDCo
+          (nthRole r0 tc n)
+          (arg_tys `getNth` n)
+          (arg_dcos `getNth` n)
+          (Just $ rhs_tys `getNth` n)
 
     go n co
       = NthCo r n co
@@ -1649,6 +1828,13 @@ mkLRCo :: LeftOrRight -> Coercion -> Coercion
 mkLRCo lr co
   | Just (ty, eq) <- isReflCo_maybe co
   = mkReflCo eq (pickLR lr (splitAppTy ty))
+  | AppCo l r <- co
+  = pickLR lr (l,r)
+  | HydrateDCo r l_ty (AppDCo dco1 dco2) r_ty <- co
+  , Just (l_ty_1, l_ty_2) <- splitAppTy_maybe l_ty
+  , Just (r_ty_1, r_ty_2) <- splitAppTy_maybe r_ty
+  = pickLR lr ( mkHydrateDCo r       l_ty_1 dco1 (Just r_ty_1)
+              , mkHydrateDCo Nominal l_ty_2 dco2 (Just r_ty_2) )
   | otherwise
   = LRCo lr co
 
@@ -1700,8 +1886,14 @@ mkCoherenceRightCo r ty co co2
 mkKindCo :: Coercion -> Coercion
 mkKindCo co | Just (ty, _) <- isReflCo_maybe co = Refl (typeKind ty)
 mkKindCo (GRefl _ _ (MCo co)) = co
+mkKindCo (HydrateDCo _ _ (GReflRightDCo (MCo co)) _) = co
+mkKindCo (HydrateDCo _ _ (GReflLeftDCo (MCo co)) _)  = mkSymCo co
 mkKindCo (UnivCo (PhantomProv h) _ _ _)    = h
 mkKindCo (UnivCo (ProofIrrelProv h) _ _ _) = h
+mkKindCo (HydrateDCo _ lhs (UnivDCo (PhantomProv h) rhs) _)
+  = mkHydrateDCo Nominal (typeKind lhs) h (Just $ typeKind rhs)
+mkKindCo (HydrateDCo _ lhs (UnivDCo (ProofIrrelProv h) rhs) _)
+  = mkHydrateDCo Nominal (typeKind lhs) h (Just $ typeKind rhs)
 mkKindCo co
   | Pair ty1 ty2 <- coercionKind co
        -- generally, calling coercionKind during coercion creation is a bad idea,
@@ -1725,8 +1917,24 @@ mkSubCo (FunCo Nominal w arg res)
   = FunCo Representational w
           (downgradeRole Representational Nominal arg)
           (downgradeRole Representational Nominal res)
+mkSubCo (HydrateDCo _r l_ty dco r_ty)
+  = assertPpr (_r == Nominal)
+      (vcat [ text "mkSubCo (HydrateDCo): unexpected role " <+> ppr _r
+            , text "l_ty:" <+> ppr l_ty
+            , text "dco:" <+> ppr dco ])
+  $ mkHydrateDCo Representational l_ty (mkSubDCo l_ty dco r_ty) (Just r_ty)
 mkSubCo co = assertPpr (coercionRole co == Nominal) (ppr co <+> ppr (coercionRole co)) $
              SubCo co
+
+downgradeDCoToRepresentational :: Role      -- ^ Role of input 'DCoercion'
+                               -> Type      -- ^ LHS type of coercion
+                               -> DCoercion
+                               -> Type      -- ^ RHS type of coercion
+                               -> DCoercion
+downgradeDCoToRepresentational Nominal          lhs dco rhs = mkSubDCo lhs dco rhs
+downgradeDCoToRepresentational Representational _   dco _   = dco
+downgradeDCoToRepresentational Phantom _ dco _
+  = pprPanic "downgradeToRepresentationalDCo: Phantom" (ppr dco)
 
 -- | Changes a role, but only a downgrade. See Note [Role twiddling functions]
 downgradeRole_maybe :: HasDebugCallStack
@@ -1828,7 +2036,6 @@ setNominalRole_maybe r co
       = Just $ UnivCo prov' Nominal co1 co2
     setNominalRole_maybe_helper _ = Nothing
 
--- AMG TODO TODO: the following is unfinished; is it needed?
 setNominalRole_maybe_dco :: Role -> Type -> DCoercion -> Maybe DCoercion
 setNominalRole_maybe_dco _ _ dco@ReflDCo         = pure dco
 setNominalRole_maybe_dco _ _ dco@GReflRightDCo{} = pure dco
@@ -1851,7 +2058,10 @@ setNominalRole_maybe_dco _ _ dco@(AxiomInstDCo coax)
   | otherwise                           = Nothing
 setNominalRole_maybe_dco _ _ StepsDCo{} = Nothing
 setNominalRole_maybe_dco r ty (TransDCo dco1 dco2)
-  = TransDCo <$> setNominalRole_maybe_dco r ty dco1 <*> setNominalRole_maybe_dco r (error "AMG TODO: xyzzy") dco2
+  = TransDCo <$> setNominalRole_maybe_dco r ty dco1 <*> setNominalRole_maybe_dco r mid dco2
+    where
+      mid = followDCo r ty dco1
+setNominalRole_maybe_dco _ _ (SubDCo dco) = Just dco
 setNominalRole_maybe_dco r _ (DehydrateCo co) = DehydrateCo <$> setNominalRole_maybe r co
 setNominalRole_maybe_dco _ _ (UnivDCo prov rhs)
   | Just prov' <- case prov of
@@ -1880,6 +2090,17 @@ toPhantomCo co
 applyRoles :: TyCon -> [Coercion] -> [Coercion]
 applyRoles tc cos
   = zipWith (\r -> downgradeRole r Nominal) (tyConRolesRepresentational tc) cos
+
+applyRoles_dco :: TyCon -> [Type] -> [DCoercion] -> [Type] -> [DCoercion]
+applyRoles_dco tc l_tys dcos r_tys
+  = zipWith4 downgrade (tyConRolesRepresentational tc) l_tys dcos r_tys
+  where
+    downgrade r l_ty dco r_ty = case r of
+      Nominal          -> dco
+      Representational -> mkSubDCo l_ty dco r_ty
+      Phantom          -> mkDehydrateCo $ mkPhantomCo (mkKindCo co) l_ty r_ty
+        where
+          co = mkHydrateDCo Nominal l_ty dco (Just r_ty)
 
 -- the Role parameter is the Role of the TyConAppCo
 -- defined here because this is intimately concerned with the implementation
@@ -1963,13 +2184,13 @@ promoteCoercion co = case co of
     AxiomInstCo {} -> mkKindCo co
     AxiomRuleCo {} -> mkKindCo co
 
-    HydrateDCo {}  -> mkKindCo co  -- AMG TODO: how to do promoteCoercion for directed coercions?
-
     UnivCo (PhantomProv kco)    _ _ _ -> kco
     UnivCo (ProofIrrelProv kco) _ _ _ -> kco
     UnivCo (PluginProv _)       _ _ _ -> mkKindCo co
     UnivCo (CorePrepProv _)     _ _ _ -> mkKindCo co
 
+    HydrateDCo {}  -> mkKindCo co
+      -- SLD TODO: how to do promoteCoercion for directed coercions?
 
     SymCo g
       -> mkSymCo (promoteCoercion g)
@@ -2726,7 +2947,7 @@ liftCoSubstCoVarBndrUsing view_co fun lc@(LC subst cenv) old_var
     k1       = coercionLKind eta
     new_var  = uniqAway (getTCvInScope subst) (setVarType old_var k1)
       -- SLD TODO (LC): we should be able to get rid of this call to 'setVarType',
-      -- and thus remove 'coercionLKind' entirely, if we don't store
+      -- and thus remove this call to 'coercionLKind' entirely, if we don't store
       -- the kind of the variable in ForAllCo/ForAllDCo.
 
     -- old_var :: s1  ~r s2
@@ -2831,7 +3052,7 @@ seqCo (FunCo r w co1 co2)       = r `seq` seqCo w `seq` seqCo co1 `seq` seqCo co
 seqCo (CoVarCo cv)              = cv `seq` ()
 seqCo (HoleCo h)                = coHoleCoVar h `seq` ()
 seqCo (AxiomInstCo con ind cos) = con `seq` ind `seq` seqCos cos
-seqCo (HydrateDCo r t1 dco mrty)= r `seq` seqType t1 `seq` seqDCo dco `seq` maybe () seqType mrty
+seqCo (HydrateDCo r t1 dco rty) = r `seq` seqType t1 `seq` seqDCo dco `seq` seqType rty
 seqCo (UnivCo p r t1 t2)        = seqProv seqCo p `seq` r `seq` seqType t1
                                                           `seq` seqType t2
 seqCo (SymCo co)                = seqCo co
@@ -2855,6 +3076,7 @@ seqDCo (CoVarDCo cv)       = cv `seq` ()
 seqDCo (AxiomInstDCo con)  = con `seq` ()
 seqDCo StepsDCo{}          = ()
 seqDCo (TransDCo co1 co2)  = seqDCo co1 `seq` seqDCo co2
+seqDCo (SubDCo co)         = seqDCo co
 seqDCo (DehydrateCo co)    = seqCo co
 seqDCo (UnivDCo prov rhs)  = seqProv seqDCo prov `seq` seqType rhs
 
@@ -2971,8 +3193,7 @@ coercionRKind co
     go (CoVarCo cv)             = coVarRType cv
     go (HoleCo h)               = coVarRType (coHoleCoVar h)
     go (FunCo _ w co1 co2)      = mkFunctionType (go w) (go co1) (go co2)
-    go (HydrateDCo r ty1 dco mrty)
-                                = maybe (followDCo r ty1 dco) id mrty
+    go (HydrateDCo _ _ _ rty )  = rty
     go (UnivCo _ _ _ ty2)       = ty2
     go (SymCo co)               = coercionLKind co
     go (TransCo _ co2)          = go co2
