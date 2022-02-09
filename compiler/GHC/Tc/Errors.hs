@@ -658,7 +658,7 @@ reportWanteds ctxt tc_lvl wc@(WC { wc_simple = simples, wc_impl = implics
     is_irred _ (IrredPred {}) = True
     is_irred _ _              = False
 
-     -- See situation (1) of Note [Suppress confusing errors]
+     -- See situation (1) of Note [Suppressing confusing errors]
     is_ww_fundep item _ = is_ww_fundep_item item
     is_ww_fundep_item = isWantedWantedFunDepOrigin . errorItemOrigin
 

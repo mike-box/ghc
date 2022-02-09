@@ -1479,7 +1479,7 @@ uUnfilledVar2 origin t_or_k swapped tv1 ty2
 
     defer = unSwap swapped (uType_defer t_or_k origin) ty1 ty2
 
--- | Checks (TYVAR-TV) and (COERCION-HOLE) of Note [Unification precondition];
+-- | Checks (TYVAR-TV) and (COERCION-HOLE) of Note [Unification preconditions];
 -- returns True if these conditions are satisfied. But see the Note for other
 -- preconditions, too.
 canSolveByUnification :: MetaInfo -> TcType  -- zonked
