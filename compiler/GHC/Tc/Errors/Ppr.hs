@@ -282,9 +282,6 @@ instance Diagnostic TcRnMessage where
                    text "in the type of a term:")
                 2 (pprType ty)
            , text "(GHC does not yet support this)" ]
-    TcRnIllegalEqualConstraints ty
-      -> mkSimpleDecorated $
-           text "Illegal equational constraint" <+> pprType ty
     TcRnBadQuantPredHead ty
       -> mkSimpleDecorated $
            hang (text "Quantified predicate must have a class or type variable head:")
@@ -730,8 +727,6 @@ instance Diagnostic TcRnMessage where
       -> ErrorWithoutFlag
     TcRnVDQInTermType{}
       -> ErrorWithoutFlag
-    TcRnIllegalEqualConstraints{}
-      -> ErrorWithoutFlag
     TcRnBadQuantPredHead{}
       -> ErrorWithoutFlag
     TcRnIllegalTupleConstraint{}
@@ -966,8 +961,6 @@ instance Diagnostic TcRnMessage where
       -> noHints
     TcRnVDQInTermType{}
       -> noHints
-    TcRnIllegalEqualConstraints{}
-      -> [suggestAnyExtension [LangExt.GADTs, LangExt.TypeFamilies]]
     TcRnBadQuantPredHead{}
       -> noHints
     TcRnIllegalTupleConstraint{}

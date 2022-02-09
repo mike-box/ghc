@@ -22,6 +22,10 @@ Language
   If you want to retain the old behavior, add a (backward-compatible) type signature,
   explicitly requesting this unusual quantification.
 
+- GHC no longer checks for ``-XGADTs`` or ``-XTypeFamilies`` in order to use
+  an equality constraint in a type. This is part of accepted proposal
+  `#371 <https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0371-non-magical-eq.md>`_.
+
 Compiler
 ~~~~~~~~
 
