@@ -15,28 +15,7 @@ test('DCo_TypeRep', normal, compile, [''])
 ## However, this optimisation was too slow, so we comment this out for now.
 #test('DCo_TransOpt', normal, compile_and_run, ['-package ghc'])
 
-## Performance tests.
-test ('T15703',
-      [ collect_compiler_stats('bytes allocated',2)
-      , extra_files(['T15703_aux.hs'])
-      ],
-      multimod_compile,
-      ['T15703', '-v0 -O'])
-test ('T8095',
-      [ collect_compiler_stats('bytes allocated',2) ],
-      compile,
-      ['-v0 -O'])
-test ('T13386',
-      [ collect_compiler_stats('bytes allocated',2) ],
-      compile,
-      ['-v0 -O0'])
 test ('DCo_Read',
       [ collect_compiler_stats('bytes allocated',2) ],
       compile,
       ['-v0 -O'])
-test ('DCo_Record',
-      [ collect_compiler_stats('bytes allocated',2)
-      , extra_files(['SuperRecord.hs'])
-      ],
-      multimod_compile,
-      ['DCo_Record', '-v0 -O'])

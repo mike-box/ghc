@@ -1224,7 +1224,6 @@ mkTcS f = TcS (oneShot f)
 instance Functor TcS where
   fmap f m = mkTcS $ \env ->
     fmap f $ unTcS m env
-  {-# INLINE fmap #-}
 
 instance Applicative TcS where
   pure x = mkTcS $ \_ -> return x
@@ -1233,9 +1232,6 @@ instance Applicative TcS where
 instance Monad TcS where
   m >>= k   = mkTcS $ \ebs -> do
     unTcS m ebs >>= (\r -> unTcS (k r) ebs)
-  {-# INLINE (>>=) #-}
-  -- This INLINE pragma, as well as the one for fmap,
-  -- is critical in T9872c.
 
 instance MonadIO TcS where
   liftIO act = TcS $ \_env -> liftIO act

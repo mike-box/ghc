@@ -1855,7 +1855,7 @@ ppr_dco ctxt_prec co@(IfaceForAllDCo {})
       = let (tvs, co'') = split_dco co' in ((name,kind_dco):tvs,co'')
     split_dco co' = ([], co')
 
--- Why these two? See Note [TcTyVars in IfaceType]
+-- Why these two? See Note [Free tyvars in IfaceType]
 ppr_dco _ (IfaceFreeCoVarDCo covar) = ppr covar
 ppr_dco _ (IfaceCoVarDCo covar)     = ppr covar
 
