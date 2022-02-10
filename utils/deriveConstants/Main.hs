@@ -58,7 +58,9 @@ main = do opts <- parseArgs
                      gccProg <- getOption "gcc program" o_gccProg
                      nmProg  <- getOption "nm program"  o_nmProg
                      let verbose = o_verbose opts
-                         gccFlags = o_gccFlags opts
+                         gccFlags = if os == "ghcjs"
+                                    then filter (/="-fcommon") (o_gccFlags opts)
+                                    else o_gccFlags opts
                      rs <- getWanted verbose os tmpdir gccProg gccFlags nmProg
                                      (o_objdumpProg opts)
                      let haskellRs = [ what
@@ -374,12 +376,13 @@ wanteds os = concat
           ,defIntOffset Both "stgGCFun"    "FUN_OFFSET(stgGCFun)"
 
           ,fieldOffset Both "Capability" "r"
+          ,if os == "ghcjs" then [] else fieldOffset C    "Capability" "lock"
           ,fieldOffset C    "Capability" "lock"
           ,structField C    "Capability" "no"
           ,structField C    "Capability" "mut_lists"
           ,structField C    "Capability" "context_switch"
           ,structField C    "Capability" "interrupt"
-          ,structField C    "Capability" "sparks"
+          ,if os == "ghcjs" then [] else structField C    "Capability" "sparks"
           ,structField C    "Capability" "total_allocated"
           ,structField C    "Capability" "weak_ptr_list_hd"
           ,structField C    "Capability" "weak_ptr_list_tl"
@@ -687,15 +690,18 @@ getWanted verbose os tmpdir gccProgram gccFlags nmProgram mobjdumpProgram
          xs <- case os of
                  "openbsd" -> readProcess objdumpProgam ["--syms", oFile] ""
                  "aix"     -> readProcess objdumpProgam ["--syms", oFile] ""
+                 "ghcjs"   -> pure []
                  _         -> readProcess nmProgram ["-P", oFile] ""
 
          let ls = lines xs
              m = Map.fromList $ case os of
-                 "aix" -> parseAixObjdump ls
-                 _     -> mapMaybe parseNmLine ls
+                 "aix"   -> parseAixObjdump ls
+                 "ghcjs" -> []
+                 _       -> mapMaybe parseNmLine ls
 
          case Map.lookup "CONTROL_GROUP_CONST_291" m of
              Just 292   -> return () -- OK
+             Nothing | os == "ghcjs" -> return ()
              Nothing    -> die "CONTROL_GROUP_CONST_291 missing!"
              Just 0x292 -> die $ "broken 'nm' detected, see https://gitlab.haskell.org/ghc/ghc/issues/11744.\n"
                               ++ "\n"
@@ -824,6 +830,7 @@ getWanted verbose os tmpdir gccProgram gccFlags nmProgram mobjdumpProgram
           -- Int so that -- cross-compiling between 32bit and
           -- 64bit platforms works.
           lookupSmall :: Map String Integer -> Name -> IO Integer
+          lookupSmall _ _ | os == "ghcjs" = pure 2
           lookupSmall m name
               = case Map.lookup name m of
                 Just v
@@ -833,8 +840,22 @@ getWanted verbose os tmpdir gccProgram gccFlags nmProgram mobjdumpProgram
                  | otherwise -> return v
                 Nothing -> die ("Can't find " ++ show name)
 
+          ghcjsHardCoded :: Map String Integer
+          ghcjsHardCoded = Map.fromList [ ("WORD_SIZE", 4)
+                                        , ("DOUBLE_SIZE", 8)
+                                        , ("CINT_SIZE", 4)
+                                        , ("CLONG_SIZE", 4)
+                                        , ("CLONG_LONG_SIZE", 8)
+                                        ]
+
           lookupResult :: Map String Integer -> (Where, What Fst)
                        -> IO (Where, What Snd)
+          -- XXX some hardcoded values
+          lookupResult _  (w, GetWord nm _)
+             | os == "ghcjs"
+             , Just res <- Map.lookup nm ghcjsHardCoded
+             = return (w, GetWord nm (Snd res))
+          -- XXX
           lookupResult m (w, GetWord name _)
               = do v <- lookupSmall m name
                    return (w, GetWord name (Snd (v - 1)))
