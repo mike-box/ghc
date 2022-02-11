@@ -6,10 +6,14 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 -- {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -ddump-simpl -ddump-to-file -ddump-stg -dsuppress-all #-}
+
 module GHC.Cmm.Alias
     ( AbsMem(..)
     , bothHeaps, heapsConflict, bothMems
-    , memConflicts, exprMem, loadAddr, storeAddr
+    , memConflicts --, exprMem, loadAddr, storeAddr
+
+    , exprMemHp, loadAddrHp, storeAddrHp
 
     , cmmHpAlias, node_exit_hps, HpSet(..), elemHpSet
     , sizeHpSet
@@ -38,6 +42,7 @@ import GHC.Cmm.Utils (regUsedIn, toBlockList)
 import Data.List (mapAccumL)
 import GHC.Utils.Monad.State.Strict
 import Control.Monad
+import GHC.Utils.Trace (pprTraceM, pprTrace, trace)
 -- import GHC.Utils.Trace (pprTrace)
 
 -----------------------------------------------------------------------------
@@ -251,39 +256,39 @@ memConflicts (SpMem o1 w1) (SpMem o2 w2)
   | otherwise = o2 + w2 > o1
 memConflicts _         _         = True
 
-exprMem :: Platform -> CmmExpr -> AbsMem
-exprMem platform (CmmLoad addr w _a) = bothMems (loadAddr platform addr (typeWidth w)) (exprMem platform addr)
-exprMem platform (CmmMachOp _ es) = Prelude.foldr bothMems NoMem (fmap (exprMem platform) es)
-exprMem _        _                = NoMem
+-- exprMem :: Platform -> CmmExpr -> AbsMem
+-- exprMem platform (CmmLoad addr w _a) = bothMems (loadAddr platform addr (typeWidth w)) (exprMem platform addr)
+-- exprMem platform (CmmMachOp _ es) = Prelude.foldr bothMems NoMem (fmap (exprMem platform) es)
+-- exprMem _        _                = NoMem
 
-loadAddr, storeAddr :: Platform -> CmmExpr -> Width -> AbsMem
-loadAddr p = refAddr p False
-storeAddr p = refAddr p True
+-- loadAddr, storeAddr :: Platform -> CmmExpr -> Width -> AbsMem
+-- loadAddr p = refAddr p False
+-- storeAddr p = refAddr p True
 
--- See also Note [SpMem Aliasing]
-refAddr :: Platform -> Bool -> CmmExpr -> Width -> AbsMem
-refAddr platform is_store e w =
-  case e of
-   CmmReg r       -> regAddr platform is_store r 0 w
-   CmmRegOff r i  -> regAddr platform is_store r i w
-   _other | regUsedIn platform spReg e -> StackMem
-          | otherwise                  -> -- pprTrace "refAddrAny" (ppr e)
-                                          AnyMem
+-- -- See also Note [SpMem Aliasing]
+-- refAddr :: Platform -> Bool -> CmmExpr -> Width -> AbsMem
+-- refAddr platform is_store e w =
+--   case e of
+--    CmmReg r       -> regAddr platform is_store r 0 w
+--    CmmRegOff r i  -> regAddr platform is_store r i w
+--    _other | regUsedIn platform spReg e -> StackMem
+--           | otherwise                  -> -- pprTrace "refAddrAny" (ppr e)
+--                                           AnyMem
 
-regAddr :: Platform -> Bool -> CmmReg -> Int -> Width -> AbsMem
-regAddr _ _store   (CmmGlobal Sp) i w = SpMem i (widthInBytes w)
-regAddr _ is_store (CmmGlobal Hp) _ _
-    | is_store  = HeapMem NewHeap
-    | otherwise = AnyMem -- This case can be dodgy. Bad cases should
-                         -- never happen but are expensive to check so we
-                         -- only do so during cmm linting. See Note [Heap Kinds]
-regAddr _ __store   (CmmGlobal CurrentTSO) _ _ = HeapMem (AnyHeap) -- important for PrimOps
-regAddr platform is_store r _ _
-    | isGcPtrType (cmmRegType platform r)
-    = if is_store
-          then (HeapMem AnyHeap)
-          else (HeapMem OldHeap) -- yay! GCPtr pays for itself
-regAddr _ _store _ _ _ = AnyMem
+-- regAddr :: Platform -> Bool -> CmmReg -> Int -> Width -> AbsMem
+-- regAddr _ _store   (CmmGlobal Sp) i w = SpMem i (widthInBytes w)
+-- regAddr _ is_store (CmmGlobal Hp) _ _
+--     | is_store  = HeapMem NewHeap
+--     | otherwise = AnyMem -- This case can be dodgy. Bad cases should
+--                          -- never happen but are expensive to check so we
+--                          -- only do so during cmm linting. See Note [Heap Kinds]
+-- regAddr _ __store   (CmmGlobal CurrentTSO) _ _ = HeapMem (AnyHeap) -- important for PrimOps
+-- regAddr platform is_store r _ _
+--     | isGcPtrType (cmmRegType platform r)
+--     = if is_store
+--           then (HeapMem AnyHeap)
+--           else (HeapMem OldHeap) -- yay! GCPtr pays for itself
+-- regAddr _ _store _ _ _ = AnyMem
 
 -----------------------------------------------------------------------------
 -- Abstracting over memory access - considering which registers might alias to Hp
@@ -293,60 +298,49 @@ regAddr _ _store _ _ _ = AnyMem
 -- AnyHeap instead.
 -----------------------------------------------------------------------------
 
-type AliasM = State [SDoc]
-
-exprMemHp :: Platform -> HpSet -> CmmExpr -> AliasM AbsMem
-exprMemHp platform hps (CmmLoad addr w _a) = -- pprTrace "exprMemHp" (ppr addr) $
-                                          pure bothMems <*> (loadAddrHp platform hps addr (typeWidth w)) <*> (exprMemHp platform hps addr)
-exprMemHp platform hps (CmmMachOp _ es) = do
-                                          args <- mapM (exprMemHp platform hps) es
-                                          return $ Prelude.foldr (\l r -> l `seq` r `seq` bothMems l r) NoMem args
-exprMemHp _        _   _                = return $ NoMem
+exprMemHp :: Platform -> HpSet -> CmmExpr -> AbsMem
+exprMemHp platform hps (CmmLoad addr w _a) = bothMems   (loadAddrHp platform hps addr (typeWidth w))
+                                                        (exprMemHp platform hps addr)
+exprMemHp platform hps (CmmMachOp _ es) = let args = fmap (exprMemHp platform hps) es
+                                          in Prelude.foldr (\l r -> l `seq` r `seq` bothMems l r) NoMem args
+exprMemHp _        _   (CmmStackSlot {}) = AnyMem
+exprMemHp _        _   _                = NoMem
 
 -- We treat reading from Hp different than loading from Hp, hence the load/store distinction.
 -- See Note [Heap Kinds]
-loadAddrHp, storeAddrHp :: Platform -> HpSet -> CmmExpr -> Width -> AliasM AbsMem
+loadAddrHp, storeAddrHp :: Platform -> HpSet -> CmmExpr -> Width -> AbsMem
 loadAddrHp p hps = refAddrHp p hps False
 storeAddrHp p hps = refAddrHp p hps True
 
-refAddrHp :: Platform -> HpSet -> Bool -> CmmExpr -> Width -> AliasM AbsMem
+refAddrHp :: Platform -> HpSet -> Bool -> CmmExpr -> Width -> AbsMem
 refAddrHp platform hps is_store e w = -- pprTrace "refAddrHp" (ppr e) $
   case e of
    CmmReg r       -> regAddrHp platform hps is_store r 0 w
    CmmRegOff r i  -> regAddrHp platform hps is_store r i w
-   _other | regUsedIn platform spReg e -> return StackMem
-          | foldRegsUsed platform (\b r -> b || r `elemHpSet` hps) False e -> hp_mem_err (text "refAddrHp") (AnyMem)
+   _other | regUsedIn platform spReg e -> StackMem
+          | foldRegsUsed platform (\b r -> b || r `elemHpSet` hps) False e -> trace_hp_mem (text "refAddrHp") (AnyMem)
           | otherwise                  -> -- pprTrace "refAddrAny" (ppr e)
-                                          return AnyMem
+                                          AnyMem
 
-regAddrHp :: Platform -> HpSet -> Bool -> CmmReg -> Int -> Width -> AliasM AbsMem
-regAddrHp _ _hps _store   (CmmGlobal Sp) i w = return $ SpMem i (widthInBytes w)
+regAddrHp :: Platform -> HpSet -> Bool -> CmmReg -> Int -> Width -> AbsMem
+regAddrHp _ _hps _store   (CmmGlobal Sp) i w = SpMem i (widthInBytes w)
 regAddrHp _ _hps is_store (CmmGlobal Hp) _ _
-    | is_store  = return $ HeapMem NewHeap
-    | otherwise = hp_mem_err (text "HpStore") (HeapMem AnyHeap)
-regAddrHp _ _hps _store   (CmmGlobal CurrentTSO) _ _ = return $ HeapMem (AnyHeap) -- important for PrimOps
+    | is_store  = HeapMem NewHeap
+    | otherwise = trace_hp_mem (text "HpStore") (HeapMem AnyHeap)
+regAddrHp _ _hps _store   (CmmGlobal CurrentTSO) _ _ = HeapMem (AnyHeap) -- important for PrimOps
 regAddrHp platform hps is_store r _ _
     | isGcPtrType (cmmRegType platform r)
     = if is_store
-          then return(HeapMem AnyHeap)
+          then (HeapMem AnyHeap)
           else if r `elemHpSet` hps
-              then hp_mem_err (text "Aliased HpRead") (HeapMem AnyHeap)
-              else return (HeapMem OldHeap) -- yay! GCPtr pays for itself
-regAddrHp _ _hps _store _ _ _ = return AnyMem
+              then trace_hp_mem (text "Aliased HpRead") (HeapMem AnyHeap)
+              else (HeapMem OldHeap) -- yay! GCPtr pays for itself
+regAddrHp _ _hps _store _ _ _ = AnyMem
 
-hp_mem_err :: SDoc -> a -> AliasM a
-hp_mem_err err x = do
-    errors <- get
-    put $ (err:errors)
-    return x
-    where
-
-hp_err_msg :: String
-hp_err_msg =
-    ("Cmm Hp invariant violated. The NCG backend currently assumes that\n" ++
-    "we never use Hp to read from memory. Nor any values which alias to Hp.\n" ++
-    "If you are using hand-written Cmm please adjust your code accordingly.\n" ++
-    "If you are not please report this as a GHC bug.\n")
+trace_hp_mem :: SDoc -> a -> a
+trace_hp_mem err x =
+    -- pprTrace "trace_hp_mem" err $
+    x
 
 -----------------------------------------------------------------------------
 -- Calculating what variables transitively depend on the value of Hp on block entry.
@@ -431,43 +425,4 @@ cmmHpAlias platform graph =
 -- If lint fails we abort with a compiler panic.
 -- Returns true if lint passes.
 lintHpReads :: Platform -> CmmGraph -> (Bool)
-lintHpReads platform graph =
-    Prelude.foldl' lintBlock True blocks
-    where
-        blocks = toBlockList graph
-
-        -- Get map of Block->Regs aliasing Hp on entry
-        hp_map = -- pprTraceIt "HpAliasing:" $
-                 cmmHpAlias platform graph
-
-        lintBlock :: Bool -> CmmBlock -> Bool
-        lintBlock ok block =
-            ok && all (lintNode) annot_middles && lintNode (final_hp_set,exit)
-            where
-                lbl = entryLabel block
-                (_entry,middles,exit) = blockSplit block
-                -- nodes and current hp-aliasing *before* the node.
-                (final_hp_set, annot_middles) = annotateHps hp_set(blockToList middles)
-                -- aliasing on entry to block.
-                hp_set
-                    | lbl == g_entry graph = mapFindWithDefault mempty lbl hp_map
-                    | otherwise = mapFindWithDefault (panic "HpMap - block not found") lbl hp_map
-
-        -- | Given a list of hp-aliasing registers on entry compute. Annotate the node(s) with
-        annotateHps :: HpSet -> [(CmmNode O O)] -> (HpSet, [(HpSet,CmmNode O O)])
-        annotateHps hp_set nodes = mapAccumL ann hp_set nodes
-            where ann hps (n) = (node_exit_hps platform n hps, (hps,n))
-
-        lintNode :: (HpSet,CmmNode e x) -> Bool
-        lintNode (hp_set,node) =
-            -- pprTrace "LintNode" (pdoc platform node $$ ppr hp_set) $
-            case node of
-                (CmmStore addr expr _a) -> (flip evalState) [] $ do
-                    !_hp1 <- storeAddrHp platform hp_set addr (cmmExprWidth platform expr)
-                    !_hp2 <- exprMemHp platform hp_set expr
-                    errs <- get
-                    when (not $ Prelude.null errs) $ do
-                        pprPanic "lintErrs:" (pdoc platform node $$ vcat errs $$ pdoc platform graph $$ ppr hp_map $$ text hp_err_msg)
-                    return True
-                _ -> let has_hp_ref = foldExpDeep (\e !_ -> exprMemHp platform hp_set e `seq` ()) node () :: ()
-                     in has_hp_ref `seq` True
+lintHpReads platform graph = True
