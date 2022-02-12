@@ -101,7 +101,7 @@ import GHC.Core.Type
 import GHC.Core.Coercion
 import GHC.Types.Name
 import GHC.Types.Name.Set
-import GHC.Types.Name.Env( NameEnv, emptyNameEnv )
+import GHC.Types.Name.Env( NameEnv )
 import GHC.Types.Literal
 import GHC.Types.Tickish
 import GHC.Core.DataCon
@@ -1047,15 +1047,15 @@ type RuleBase = NameEnv [CoreRule]
 -- but it also includes the set of visible orphans we use to filter out orphan
 -- rules which are not visible (even though we can see them...)
 data RuleEnv
-    = RuleEnv { re_base          :: RuleBase
+    = RuleEnv { re_base          :: [RuleBase]
               , re_visible_orphs :: ModuleSet
               }
 
 mkRuleEnv :: RuleBase -> [Module] -> RuleEnv
-mkRuleEnv rules vis_orphs = RuleEnv rules (mkModuleSet vis_orphs)
+mkRuleEnv rules vis_orphs = RuleEnv [rules] (mkModuleSet vis_orphs)
 
 emptyRuleEnv :: RuleEnv
-emptyRuleEnv = RuleEnv emptyNameEnv emptyModuleSet
+emptyRuleEnv = RuleEnv [] emptyModuleSet
 
 -- | A 'CoreRule' is:
 --
