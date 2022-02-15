@@ -6,7 +6,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 -- {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -ddump-simpl -ddump-to-file -ddump-stg -dsuppress-all #-}
+-- {-# OPTIONS_GHC -ddump-simpl -ddump-to-file -ddump-stg -fprof-late-ccs #-}
+{-# OPTIONS_GHC -ddump-simpl -ddump-to-file -ddump-stg #-}
 
 module GHC.Cmm.Alias
     ( AbsMem(..)

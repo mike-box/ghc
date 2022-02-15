@@ -1,6 +1,9 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- {-# OPTIONS_GHC -ddump-simpl -ddump-to-file -ddump-stg -fprof-late-ccs #-}
+{-# OPTIONS_GHC -ddump-simpl -ddump-to-file -ddump-stg -ddump-stg-final #-}
+
 module GHC.Cmm.Sink (
      cmmSink
   ) where
@@ -460,9 +463,10 @@ dropAssignments platform hps should_drop state assigs
 -- This also does constant folding for primops, since
 -- inlining opens up opportunities for doing so.
 
+{-# NOINLINE tryToInline #-}
 tryToInline
    :: forall x. Platform
-   -> LRegSet               -- set of registers live after this
+   -> LRegSet                   -- set of registers live after this
                                 -- node.  We cannot inline anything
                                 -- that is live after the node, unless
                                 -- it is small enough to duplicate.
