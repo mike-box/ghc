@@ -204,7 +204,7 @@ module GHC.Driver.Session (
 
         -- * Linker/compiler information
         LinkerInfo(..),
-        CompilerInfo(..),
+        CompilerInfo(..), clang,
         useXLinkerRPath,
 
         -- * Include specifications
@@ -4886,6 +4886,10 @@ data CompilerInfo
    | AppleClang51
    | UnknownCC
    deriving Eq
+
+clang :: CompilerInfo -- used in .hs-boot to make it resilient to
+                      -- changes in CompilerInfo
+clang = Clang
 
 
 -- | Should we use `-XLinker -rpath` when linking or not?

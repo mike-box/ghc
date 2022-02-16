@@ -49,7 +49,7 @@ import GHC.Core.FamInstEnv
 import GHC.Core.Unify( RoughMatchTc(..) )
 
 import GHC.Driver.Env
-import GHC.Driver.Backend
+import GHC.Driver.Backend.Types
 import GHC.Driver.Session
 import GHC.Driver.Plugins
 
