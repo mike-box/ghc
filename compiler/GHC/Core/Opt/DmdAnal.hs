@@ -509,7 +509,7 @@ dmdAnal' env dmd (Case scrut case_bndr ty alts)
     in
 --    pprTrace "dmdAnal:Case2" (vcat [ text "scrut" <+> ppr scrut
 --                                   , text "scrut_ty" <+> ppr scrut_ty
---                                   , text "alt_tys" <+> ppr alt_tys
+--                                   , text "alt_ty1" <+> ppr alt_ty1
 --                                   , text "alt_ty2" <+> ppr alt_ty2
 --                                   , text "res_ty" <+> ppr res_ty ]) $
     WithDmdType res_ty (Case scrut' case_bndr' ty alts')

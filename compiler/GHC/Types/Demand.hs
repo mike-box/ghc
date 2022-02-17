@@ -459,6 +459,7 @@ here that says what they should compute.
       - Handy special cases:
           o 'plusCard C_10' bumps up the strictness of its argument, just like
             'lubCard C_00' lazifies it, without touching upper bounds.
+            See also 'strictifyCard'
           o Similarly, 'plusCard C_0N' discards usage information
             (incl. absence) but leaves strictness alone.
 
@@ -513,6 +514,7 @@ pattern C_01 = Card 0b011
 pattern C_1N :: Card
 pattern C_1N = Card 0b110
 -- | Every possible cardinality; the top element, {0,1,n}. Pretty-printed as L.
+-- See also 'strictifyCard'
 pattern C_0N :: Card
 pattern C_0N = Card 0b111
 
@@ -547,14 +549,21 @@ isCardNonOnce n = isAbs n || not (isUsedOnce n)
 
 -- | Intersect with [0,1].
 oneifyCard :: Card -> Card
-oneifyCard C_0N = C_01
-oneifyCard C_1N = C_11
-oneifyCard c    = c
+oneifyCard = glbCard C_01
+
+-- | Intersect with [1,n]. The same as @'plusCard' 'C_10'@.
+strictifyCard :: Card -> Card
+strictifyCard = glbCard C_1N
 
 -- | Denotes '∪' on 'Card'.
 lubCard :: Card -> Card -> Card
 -- See Note [Bit vector representation for Card]
 lubCard (Card a) (Card b) = Card (a .|. b) -- main point of the bit-vector encoding!
+
+-- | Denotes '∩' on 'Card'.
+glbCard :: Card -> Card -> Card
+-- See Note [Bit vector representation for Card]
+glbCard (Card a) (Card b) = Card (a .&. b)
 
 -- | Denotes '+' on lower and upper bounds of 'Card'.
 plusCard :: Card -> Card -> Card
@@ -575,6 +584,16 @@ multCard (Card a) (Card b)
     bit0 = (a .|. b)                   .&. 0b001
     bit1 = (a .&. b)                   .&. 0b010
     bitN = (a .|. b) .&. shiftL bit1 1 .&. 0b100
+
+-- | Denotes '∪' on lower and '+' on upper bounds of 'Card'.
+lubPlusCard :: Card -> Card -> Card
+-- See Note [Algebraic specification for plusCard and multCard]
+lubPlusCard (Card a) (Card b)
+  = Card (bit0 .|. bit1 .|. bitN)
+  where
+    bit0 =  (a .|. b)                         .&. 0b001
+    bit1 =  (a .|. b)                         .&. 0b010
+    bitN = ((a .|. b) .|. shiftL (a .&. b) 1) .&. 0b100
 
 {-
 ************************************************************************
@@ -679,8 +698,13 @@ data SubDemand
   -- as 'Boxed'. See Note [Boxity in Poly] for why we want it to carry 'Boxity'.
   -- Expands to 'Call' via 'viewCall' and to 'Prod' via 'viewProd'.
   --
-  -- @Poly b n@ is semantically equivalent to @Prod b [n :* Poly Boxed n, ...]@
-  -- or @Call n (Poly Boxed n)@. 'viewCall' and 'viewProd' do these rewrites.
+  -- @Poly b n@ is semantically equivalent to @Prod b [n :* Poly Boxed n, ...]@.
+  -- For 'Call', it's a bit more complicated: Only @Poly b C_0N@ is fully
+  -- semantically equivalent to @Call C_0N (Poly Boxed C_0N)@. For other
+  -- cardinalities @n@, we only have @Poly b n <= Call n (Poly Boxed n)@,
+  -- because otherwise 'plusSubDmd' won't be well-defined (#21085).
+  -- 'viewCall' and 'viewProd' do the expansion of 'Poly's, 'mkProd' and
+  -- 'mkCall' the contraction to 'Poly's (if permitted).
   --
   -- In Note [Demand notation]: @L  === P(L,L,...)@  and @L  === CL(L)@,
   --                            @B  === P(B,B,...)@  and @B  === CB(B)@,
@@ -765,11 +789,11 @@ viewProd _ _
                         -- for Arity. Otherwise, #18304 bites us.
 
 -- | A smart constructor for 'Call', applying rewrite rules along the semantic
--- equality @Call n (Poly n) === Poly n@, simplifying to 'Poly' 'SubDemand's
+-- equality @Call C_0N (Poly C_0N) === Poly C_0N@, simplifying to 'Poly' 'SubDemand's
 -- when possible.
 mkCall :: CardNonAbs -> SubDemand -> SubDemand
-mkCall C_1N sd@(Poly Boxed C_1N) = sd
 mkCall C_0N sd@(Poly Boxed C_0N) = sd
+-- mkCall C_1N sd@(Poly Boxed C_1N) = sd -- DON'T do this. It makes plusSubDmd undefined! #21085
 mkCall n    cd               = assertPpr (isCardNonAbs n) (ppr n $$ ppr cd) $
                                Call n cd
 
@@ -794,9 +818,13 @@ unboxSubDemand sd@Call{}   = sd
 
 -- | Denotes '∪' on 'SubDemand'.
 lubSubDmd :: SubDemand -> SubDemand -> SubDemand
--- Handle botSubDmd (just an optimisation, the general case would do the same)
+-- Handle botSubDmd and topSubDmd (mostly an optimisation, but the Unboxed
+-- thing is a change in behavior because Unboxed should win in lub;
+-- see Note [lubBoxity and plusBoxity].)
 lubSubDmd (Poly Unboxed C_10) d2                  = d2
 lubSubDmd d1                  (Poly Unboxed C_10) = d1
+lubSubDmd d@(Poly Boxed C_0N) _                   = d
+lubSubDmd _                   d@(Poly Boxed C_0N) = d
 -- Handle Prod
 lubSubDmd (Prod b1 ds1) (Poly b2 n2)
   | let !d = polyFieldDmd n2
@@ -807,11 +835,13 @@ lubSubDmd (Prod b1 ds1) (Prod b2 ds2)
 -- Handle Call
 lubSubDmd (Call n1 sd1) sd2@(Poly _ n2)
   -- See Note [Call demands are relative]
+  -- This equation is strictly more expressive than what we get by considering
+  -- strictness and usage in isolation. Not that it matters much?!
   | isAbs n2  = mkCall (lubCard n2 n1) sd1
   | otherwise = mkCall (lubCard n2 n1) (lubSubDmd sd1 sd2)
 lubSubDmd (Call n1 d1)  (Call n2 d2)
   | otherwise = mkCall (lubCard n1 n2) (lubSubDmd d1 d2)
--- Handle Poly. Exploit reflexivity (so we'll match the Prod or Call cases again).
+-- Handle Poly. Exploit commutativity (so we'll match the Prod or Call cases again).
 lubSubDmd (Poly b1 n1)  (Poly b2 n2) = Poly (lubBoxity b1 b2) (lubCard n1 n2)
 lubSubDmd sd1@Poly{}    sd2          = lubSubDmd sd2 sd1
 -- Otherwise (Call `lub` Prod) return Top
@@ -834,7 +864,8 @@ multDmd C_11 dmd         = dmd -- An optimisation
 -- `B :* A`. We want to return `B` in these cases.
 multDmd C_10 (n :* _)    = if isStrict n then BotDmd else AbsDmd
 multDmd n    (C_10 :* _) = if isStrict n then BotDmd else AbsDmd
-multDmd n    (m :* sd)   = multCard n m :* multSubDmd n sd
+-- See Note [SubDemand denotes at least one evaluation] for the strictifyCard
+multDmd n    (m :* sd)   = multCard n m :* multSubDmd (strictifyCard n) sd
 
 -- | Denotes '+' on 'SubDemand'.
 plusSubDmd :: SubDemand -> SubDemand -> SubDemand
@@ -855,7 +886,7 @@ plusSubDmd (Call n1 sd1) sd2@(Poly _ n2)
   | otherwise = mkCall (plusCard n2 n1) (lubSubDmd sd1 sd2)
 plusSubDmd (Call n1 sd1) (Call n2 sd2)
   | otherwise = mkCall (plusCard n1 n2) (lubSubDmd sd1 sd2)
--- Handle Poly. Exploit reflexivity (so we'll match the Prod or Call cases again).
+-- Handle Poly. Exploit commutativity (so we'll match the Prod or Call cases again).
 plusSubDmd (Poly b1 n1) (Poly b2 n2) = Poly (plusBoxity b1 b2) (plusCard n1 n2)
 plusSubDmd sd1@Poly{}   sd2          = plusSubDmd sd2 sd1
 -- Otherwise (Call `lub` Prod) return Top
@@ -863,7 +894,51 @@ plusSubDmd _            _            = topSubDmd
 
 -- | Denotes '+' on 'Demand'.
 plusDmd :: Demand -> Demand -> Demand
-plusDmd (n1 :* sd1) (n2 :* sd2) = plusCard n1 n2 :* plusSubDmd sd1 sd2
+-- The first two equations handle the special case of absent demands:
+plusDmd AbsDmd dmd    = dmd
+plusDmd dmd    AbsDmd = dmd
+-- The four special cases here are due to strictness demands and
+-- Note [SubDemand denotes at least one evaluation]:
+plusDmd (n1 :* sd1) (n2 :* sd2) = case (isStrict n1, isStrict n2) of
+  (True, True)   -> plusCard n1 n2 :* plusSubDmd sd1 sd2           -- the simple case
+  (True, False)  -> plusCard n1 n2 :* plusSubDmd sd1 (lazify sd2)
+  (False, True)  -> plusCard n1 n2 :* plusSubDmd (lazify sd1) sd1
+  (False, False) -> plusCard n1 n2 :* lubPlusSubDmd sd1 sd2        -- NB: lub lower bounds here
+  where
+    lazify = multSubDmd C_01
+
+-- | Denotes '∪' on lower bounds and '+' on upper bounds on 'SubDemand'.
+lubPlusSubDmd :: SubDemand -> SubDemand -> SubDemand
+-- Handle seqSubDmd (just an optimisation, the general case would do the same)
+lubPlusSubDmd (Poly Unboxed C_00) d2                  = d2
+lubPlusSubDmd d1                  (Poly Unboxed C_00) = d1
+-- Handle Prod
+lubPlusSubDmd (Prod b1 ds1) (Poly b2 n2)
+  | let !d = polyFieldDmd n2
+  = mkProd (plusBoxity b1 b2) (strictMap (lubPlusDmd d) ds1)
+lubPlusSubDmd (Prod b1 ds1) (Prod b2 ds2)
+  | equalLength ds1 ds2
+  = mkProd (plusBoxity b1 b2) (strictZipWith lubPlusDmd ds1 ds2)
+-- Handle Call
+lubPlusSubDmd (Call n1 sd1) sd2@(Poly _ n2)
+  -- See Note [Call demands are relative]
+  | isAbs n2  = mkCall (lubPlusCard n2 n1) sd1
+  | otherwise = mkCall (lubPlusCard n2 n1) (lubSubDmd sd1 sd2)
+lubPlusSubDmd (Call n1 sd1) (Call n2 sd2)
+  | otherwise = mkCall (lubPlusCard n1 n2) (lubSubDmd sd1 sd2)
+-- Handle Poly. Exploit commutativity (so we'll match the Prod or Call cases again).
+lubPlusSubDmd (Poly b1 n1) (Poly b2 n2) = Poly (plusBoxity b1 b2) (lubPlusCard n1 n2)
+lubPlusSubDmd sd1@Poly{}   sd2          = lubPlusSubDmd sd2 sd1
+-- Otherwise (Call `lub` Prod) return Top
+lubPlusSubDmd _            _            = topSubDmd
+
+-- | Denotes '∪' on lower bounds and '+' on upper bounds on 'Demand'.
+lubPlusDmd :: Demand -> Demand -> Demand
+-- The first two equations handle the special case of bottom demands:
+lubPlusDmd BotDmd dmd    = dmd
+lubPlusDmd dmd    BotDmd = dmd
+-- This will be rather simple compared to the mess in plusSubDmd:
+lubPlusDmd (n1 :* sd1) (n2 :* sd2) = lubPlusCard n1 n2 :* lubPlusSubDmd sd1 sd2
 
 -- | Used to suppress pretty-printing of an uninformative demand
 isTopDmd :: Demand -> Bool
@@ -936,7 +1011,7 @@ oneifyDmd (n :* sd) = oneifyCard n :* sd
 strictifyDmd :: Demand -> Demand
 strictifyDmd AbsDmd    = seqDmd
 strictifyDmd BotDmd    = BotDmd
-strictifyDmd (n :* sd) = plusCard C_10 n :* sd
+strictifyDmd (n :* sd) = strictifyCard n :* sd
 
 -- | If the argument is a used non-newtype dictionary, give it strict demand.
 -- Also split the product type & demand and recur in order to similarly
