@@ -15,6 +15,8 @@ module GHC.StgToCmm.ArgRep (
 
         slowCallPattern,
 
+        vectorArgRep,
+
         ) where
 
 import GHC.Prelude
@@ -113,6 +115,17 @@ argRepSizeW platform = \case
 
 idArgRep :: Platform -> Id -> ArgRep
 idArgRep platform = toArgRep platform . idPrimRep
+
+vectorArgRep :: ArgRep -> Bool
+vectorArgRep V16 = True
+vectorArgRep V32 = True
+vectorArgRep V64 = True
+vectorArgRep P = False
+vectorArgRep N = False
+vectorArgRep L = False
+vectorArgRep V = False
+vectorArgRep F = False
+vectorArgRep D = False
 
 -- This list of argument patterns should be kept in sync with at least
 -- the following:

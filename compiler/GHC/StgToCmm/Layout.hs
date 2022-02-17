@@ -26,7 +26,7 @@ module GHC.StgToCmm.Layout (
         mkVirtConstrSizes,
         getHpRelOffset,
 
-        ArgRep(..), toArgRep, argRepSizeW, -- re-exported from GHC.StgToCmm.ArgRep
+        ArgRep(..), toArgRep, argRepSizeW, vectorArgRep, -- re-exported from GHC.StgToCmm.ArgRep
         getArgAmode, getNonVoidArgAmodes
   ) where
 
